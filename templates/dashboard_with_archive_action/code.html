@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Project Management Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#0d59f2",
+                        "background-light": "#f5f6f8",
+                        "background-dark": "#101622",
+                    },
+                    fontFamily: {
+                        "display": ["Inter"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .ios-blur { backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+        .swipe-container { overflow: hidden; position: relative; }
+        .archive-action {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            padding-left: 1.5rem;
+            background-color: #f59e0b; /* Amber 500 */
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen flex justify-center">
+<!-- Mobile Container (iPhone Mockup Feel) -->
+<div class="w-full max-w-[430px] bg-white dark:bg-slate-900 min-h-screen shadow-2xl relative flex flex-col overflow-hidden">
+<!-- iOS Status Bar Placeholder -->
+<div class="flex justify-between items-center px-8 pt-4 pb-2 text-xs font-semibold">
+<span>9:41</span>
+<div class="flex gap-1.5 items-center">
+<span class="material-icons-outlined text-[14px]">signal_cellular_alt</span>
+<span class="material-icons-outlined text-[14px]">wifi</span>
+<span class="material-icons-outlined text-[14px]">battery_full</span>
+</div>
+</div>
+<!-- Navigation Bar -->
+<header class="sticky top-0 z-30 bg-white/80 dark:bg-slate-900/80 ios-blur px-6 py-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
+<h1 class="text-2xl font-bold tracking-tight">Dashboard</h1>
+<div class="flex items-center gap-3">
+<button class="p-2 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center">
+<span class="material-icons-outlined text-primary">add</span>
+</button>
+<img alt="Profile" class="w-8 h-8 rounded-full border border-slate-200 dark:border-slate-700" data-alt="User profile avatar smiling clearly" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDGdC3-NJZ-FO0q6AdvtVLfu62edQErfXMjcISaoymXHUvsH1spAiynbxzugkJcU3tvX5uZevNXCSEHWWBuYVYyv4xSeAATYl2xflY-jc9RxlMplr_ZWU1C8F2Ac6vznSBBxtez24tm9zhlPvlV-yFqCwRJHebZcIpksi4RKkwBbe3cp2xd5lecO-N-QGQdUMIQCzcun-qH8GfLTMWYTk_2cEw8ZzeaXzAj4rBUuNfJGwUHEgWuUMJuM9JDpG6JfvaTQ7ul-X1qzWw"/>
+</div>
+</header>
+<!-- Search Bar -->
+<div class="px-6 py-4">
+<div class="relative group">
+<span class="material-icons-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors">search</span>
+<input class="w-full pl-10 pr-4 py-3 bg-slate-100 dark:bg-slate-800 border-none rounded-xl text-sm focus:ring-2 focus:ring-primary/50 placeholder:text-slate-500" placeholder="Search notes and projects..." type="text"/>
+</div>
+</div>
+<!-- Note List -->
+<main class="flex-1 px-4 space-y-4 pb-24 overflow-y-auto">
+<!-- Swiped State Card (Archiving) -->
+<div class="swipe-container rounded-xl">
+<!-- Archive Action Background Layer -->
+<div class="archive-action text-white">
+<div class="flex flex-col items-center ml-2">
+<span class="material-icons-outlined text-2xl">archive</span>
+<span class="text-[10px] font-bold uppercase tracking-wider">Archive</span>
+</div>
+</div>
+<!-- Card content shifted to the right -->
+<div class="relative bg-white dark:bg-slate-800 p-5 border border-slate-100 dark:border-slate-700 translate-x-24 shadow-sm">
+<div class="flex justify-between items-start mb-2">
+<h3 class="font-bold text-lg">Q3 Project Roadmap</h3>
+<span class="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold uppercase tracking-tight">Strategy</span>
+</div>
+<p class="text-slate-600 dark:text-slate-400 text-sm line-clamp-2">Define key milestones for the upcoming expansion into the European market. Focus on localization and...</p>
+<div class="mt-4 flex items-center justify-between">
+<span class="text-[11px] text-slate-400 font-medium">Updated 2h ago</span>
+<div class="flex -space-x-2">
+<img class="w-6 h-6 rounded-full border-2 border-white dark:border-slate-800" data-alt="Female team member profile" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCjkURIfhCa5h60DLtohDRVp6eW7KfUJbt43mlLINRDjD3ID-11XMpCluTnfKUGIJNDygdYfm0pHM0l_4j4UTqd4f4UQ40vqpUvVIun28stCIghEmY71qVwcmFP0-qZxmmKE-VIUUkwRsyvqy_xtPdAho1tw2P4HdEtxD7aD3xFjElUz-1liVl9PaQ25itWm5wcg5pW7qlKummK6Qq9tkqyJ8zeLM-q3hOhQpfnFu-CYCexnPgj1eL6vmlO_aSokvHcRa0jda-DNog"/>
+<img class="w-6 h-6 rounded-full border-2 border-white dark:border-slate-800" data-alt="Male team member profile" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBzAn5j67-KkM6cYo_3QzSC7ddZ48hWwtZ0WpX2lWBoC2xZHl3vYyT8pXZsBHnV2kmZ8TcVJ_B-PzTVNwHg0DQ8faE5WBQMssmfRYy0VV7Adh1jFM6gPu3t5rgx3jBIJ8quDQisB3-KRQxGEqOw77YAdbMSn6W-t8sS3Qklb3FMkPJkkqanlvYxLWkvLaU-ay6XNlooP3avJRvBgLEzo-GY9xxLUMhc80PhSi82ZMYVombnIQ_kT_Sy_ZWHy0GGrtcTKx7urZgFlcg"/>
+</div>
+</div>
+</div>
+</div>
+<!-- Locked Card (Pessimistic Locking) -->
+<div class="bg-slate-50 dark:bg-slate-800/50 p-5 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 relative">
+<div class="flex justify-between items-start mb-2">
+<h3 class="font-bold text-lg text-slate-500 dark:text-slate-400">Team Offsite Ideas</h3>
+<div class="flex items-center gap-1.5 px-2 py-0.5 bg-slate-200 dark:bg-slate-700 rounded-full">
+<span class="material-icons-outlined text-[14px]">lock</span>
+<span class="text-[10px] font-bold uppercase tracking-tight">Locked</span>
+</div>
+</div>
+<p class="text-slate-400 dark:text-slate-500 text-sm italic">"Let's look at mountain retreats vs beach resorts for the winter session..."</p>
+<div class="mt-4 flex items-center gap-2">
+<div class="flex items-center gap-2 bg-white dark:bg-slate-800 px-2 py-1 rounded-lg border border-slate-100 dark:border-slate-700 shadow-sm">
+<img class="w-5 h-5 rounded-full" data-alt="Small profile icon of user editing" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBMoOX5uOowNL0QUXsfFihpXmAt_9UfuQS_LGdjRilLvzFRwYg8vnXY-FMU0XA55-AA0cKalcH6UzboTcqr9gqN8RjFpwsHQoxbht-xBIXXimk-54U7SEUOeofqA843ytXzZQQ1vMrQ35oKF0VyD6Cw7X6Esk7rPZQiiZ4hOgw0ys372uRFwjL9SotsmG7kG6usJTIy_CgPi6pQtcs_0l8aKS_AfD2hBeKK30esB_2WNsC9LAblTxKbKJmVL4WBiMKeASK8aeZBDd8"/>
+<span class="text-[11px] text-slate-500 dark:text-slate-400 font-medium leading-none">Alex is editing...</span>
+</div>
+</div>
+</div>
+<!-- Standard Card 1 -->
+<div class="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-100 dark:border-slate-700 shadow-sm">
+<div class="flex justify-between items-start mb-2">
+<h3 class="font-bold text-lg">Meeting Minutes: Client Sync</h3>
+<span class="text-[10px] bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-tight">Client</span>
+</div>
+<p class="text-slate-600 dark:text-slate-400 text-sm line-clamp-2">Client requested a follow-up on the API integration progress. Need to sync with the backend team.</p>
+<div class="mt-4 flex items-center justify-between">
+<span class="text-[11px] text-slate-400 font-medium">Updated 5h ago</span>
+<div class="flex gap-2 text-slate-400">
+<span class="material-icons-outlined text-[18px]">attachment</span>
+<span class="material-icons-outlined text-[18px]">chat_bubble_outline</span>
+</div>
+</div>
+</div>
+<!-- Standard Card 2 -->
+<div class="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-100 dark:border-slate-700 shadow-sm">
+<div class="flex justify-between items-start mb-2">
+<h3 class="font-bold text-lg">Design System Feedback</h3>
+<span class="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold uppercase tracking-tight">Design</span>
+</div>
+<p class="text-slate-600 dark:text-slate-400 text-sm line-clamp-2">The primary button hover state needs more contrast for accessibility compliance. Check WCAG AA.</p>
+<div class="mt-4 flex items-center justify-between">
+<span class="text-[11px] text-slate-400 font-medium">Updated Yesterday</span>
+<div class="flex gap-1">
+<div class="w-5 h-5 bg-primary/20 rounded-full flex items-center justify-center">
+<span class="material-icons-outlined text-[12px] text-primary">done</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Footer Pagination Indicator -->
+<div class="py-6 text-center">
+<button class="text-sm font-semibold text-primary hover:underline">View All Archived Notes</button>
+</div>
+</main>
+<!-- Floating Action Button -->
+<button class="fixed bottom-10 right-8 w-16 h-16 bg-primary text-white rounded-full shadow-lg shadow-primary/40 flex items-center justify-center hover:scale-105 transition-transform active:scale-95 z-50">
+<span class="material-icons-outlined text-3xl">add</span>
+</button>
+<!-- iOS Home Indicator -->
+<div class="absolute bottom-1 left-1/2 -translate-x-1/2 w-32 h-1 bg-slate-200 dark:bg-slate-700 rounded-full"></div>
+<!-- Mobile App Bottom Navigation Bar -->
+<nav class="absolute bottom-0 left-0 right-0 bg-white/90 dark:bg-slate-900/90 ios-blur border-t border-slate-100 dark:border-slate-800 px-8 py-3 flex justify-between items-center z-40">
+<button class="text-primary flex flex-col items-center gap-0.5">
+<span class="material-icons-outlined">dashboard</span>
+<span class="text-[10px] font-bold">Home</span>
+</button>
+<button class="text-slate-400 flex flex-col items-center gap-0.5">
+<span class="material-icons-outlined">folder</span>
+<span class="text-[10px] font-bold">Projects</span>
+</button>
+<div class="w-10"></div> <!-- Space for FAB if it were center-aligned -->
+<button class="text-slate-400 flex flex-col items-center gap-0.5">
+<span class="material-icons-outlined">notifications</span>
+<span class="text-[10px] font-bold">Alerts</span>
+</button>
+<button class="text-slate-400 flex flex-col items-center gap-0.5">
+<span class="material-icons-outlined">settings</span>
+<span class="text-[10px] font-bold">Settings</span>
+</button>
+</nav>
+</div>
+</body></html>

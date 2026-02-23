@@ -11,16 +11,20 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('projets', function (Blueprint $table) {
+        Schema::create('notes', function (Blueprint $table) {
             $table->id();
             $table->string('titre');
-            $table->text('description')->nullable();
-            $table->string('couleur')->default('#2F3C73');
-            $table->boolean('statut')->default(true);
+            $table->longText('contenu');
+            $table->enum('statut', ['brouillon', 'publié', 'archivé'])->default('publié');
+            $table->unsignedBigInteger('projet_id');
+            $table->unsignedBigInteger('auteur_id');
             $table->unsignedBigInteger('team_id');
             $table->uuid('sync_id')->unique()->comment('Identifiant pour la synchronisation');
+            $table->enum('sync_status', ['pending', 'synced'])->default('synced');
             $table->timestamps();
 
+            $table->foreign('projet_id')->references('id')->on('projets')->onDelete('cascade');
+            $table->foreign('auteur_id')->references('id')->on('users')->onDelete('cascade');
             $table->foreign('team_id')->references('id')->on('teams')->onDelete('cascade');
         });
     }
@@ -30,6 +34,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('projets');
+        Schema::dropIfExists('notes');
     }
 };

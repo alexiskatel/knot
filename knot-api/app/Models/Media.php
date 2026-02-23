@@ -1,18 +1,17 @@
 <?php
 
-/**
- * Created by Reliese Model.
- */
-
 namespace App\Models;
 
 use Carbon\Carbon;
-use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Class Media
- * 
+ *
  * @property int $id
  * @property string $name
  * @property string $file_name
@@ -21,95 +20,70 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $disk
  * @property string $file_hash
  * @property string|null $collection
+ * @property string|null $model_type
+ * @property int|null $model_id
+ * @property int|null $team_id
  * @property int $size
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
- * 
- * @property Collection|Banniere[] $bannieres
- * @property Collection|BonComportement[] $bon_comportements
- * @property Collection|Consequence[] $consequences
- * @property Collection|DroitVictime[] $droit_victimes
- * @property Collection|Facilitation[] $facilitations
- * @property Collection|Forme[] $formes
- * @property Collection|Institution[] $institutions
- * @property Collection|NumeroUrgence[] $numero_urgences
- * @property Collection|ObjetNumerique[] $objet_numeriques
- * @property Collection|SecuriteNumerique[] $securite_numeriques
- * @property Collection|StructurePriseEnCharge[] $structure_prise_en_charges
- *
- * @package App\Models
  */
 class Media extends Model
 {
-	protected $table = 'medias';
+    use HasFactory;
 
-	protected $casts = [
-		'size' => 'int'
-	];
+    protected $table = 'medias';
 
-	protected $fillable = [
-		'name',
-		'file_name',
-		'mime_type',
-		'path',
-		'disk',
-		'file_hash',
-		'collection',
-		'size'
-	];
+    protected $casts = [
+        'size' => 'int',
+        'model_id' => 'int',
+        'team_id' => 'int'
+    ];
 
-	public function bannieres()
-	{
-		return $this->hasMany(Banniere::class, 'image_id');
-	}
+    protected $fillable = [
+        'name',
+        'file_name',
+        'mime_type',
+        'path',
+        'disk',
+        'file_hash',
+        'collection',
+        'model_type',
+        'model_id',
+        'team_id',
+        'size'
+    ];
 
-	public function bon_comportements()
-	{
-		return $this->hasMany(BonComportement::class, 'image_id');
-	}
+    /**
+     * Récupère le modèle polymorphique associé
+     */
+    public function model(): MorphTo
+    {
+        return $this->morphTo();
+    }
 
-	public function consequences()
-	{
-		return $this->hasMany(Consequence::class, 'image_id');
-	}
+    /**
+     * Récupère le team associé au média
+     */
+    public function team(): BelongsTo
+    {
+        return $this->belongsTo(Team::class);
+    }
 
-	public function droit_victimes()
-	{
-		return $this->hasMany(DroitVictime::class, 'image_id');
-	}
+    /**
+     * Récupère l'URL du média
+     */
+    public function getUrlAttribute(): string
+    {
+        return Storage::disk($this->disk)->url($this->path);
+    }
 
-	public function facilitations()
-	{
-		return $this->hasMany(Facilitation::class, 'image_id');
-	}
-
-	public function formes()
-	{
-		return $this->hasMany(Forme::class, 'image_id');
-	}
-
-	public function institutions()
-	{
-		return $this->hasMany(Institution::class, 'image_id');
-	}
-
-	public function numero_urgences()
-	{
-		return $this->hasMany(NumeroUrgence::class, 'image_id');
-	}
-
-	public function objet_numeriques()
-	{
-		return $this->hasMany(ObjetNumerique::class, 'image_id');
-	}
-
-	public function securite_numeriques()
-	{
-		return $this->hasMany(SecuriteNumerique::class, 'image_id');
-	}
-
-	public function structure_prise_en_charges()
-	{
-		return $this->hasMany(StructurePriseEnCharge::class, 'image_id');
-	}
+    /**
+     * Supprime le fichier du stockage lors de la suppression du modèle
+     */
+    protected static function booted()
+    {
+        static::deleting(function ($media) {
+            Storage::disk($media->disk)->delete($media->path);
+        });
+    }
 }
