@@ -1,0 +1,39 @@
+stages:
+  - setup_and_update
+  - database
+  - finalize
+
+# Configuration par défaut pour tous les jobs k
+default:
+  image: alpine:latest
+
+  before_script:
+    # PRÉPARATION DU RUNNER
+    - apk update && apk add openssh-client
+    - mkdir -p ~/.ssh
+    - cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa 
+    - chmod 600 ~/.ssh/id_rsa
+
+# ----------------------------------------------------
+# STAGE 1 : SETUP ET MISE À JOUR DU CODE ET DES DÉPENDANCES
+# ----------------------------------------------------
+laravel_update_code:
+  stage: setup_and_update
+  only: 
+   - prod
+  script:
+   - ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $DEPLOY_USER@$VPS_HOST 'cd /var/www/knot && git pull origin prod && composer install --no-interaction --prefer-dist --optimize-autoloader'
+# ----------------------------------------------------
+# STAGE 2 : BASE DE DONNÉES
+# ----------------------------------------------------
+laravel_run_migrations:
+  stage: database
+  script:
+    - ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $DEPLOY_USER@$VPS_HOST 'cd /var/www/knot && php artisan migrate --force'
+
+# STAGE 3 : FINALISATION ET NETTOYAGE
+# ----------------------------------------------------
+laravel_finalize:
+  stage: finalize
+  script:
+    - ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $DEPLOY_USER@$VPS_HOST 'cd /var/www/knot && php artisan optimize:clear'
