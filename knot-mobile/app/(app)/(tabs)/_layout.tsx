@@ -14,7 +14,7 @@ export default function TabsLayout() {
 
       <TabList style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         <TabTrigger name="home" href="/(app)" asChild>
-          <TabButton icon="home-outline" iconFocused="home" label="Accueil" />
+          <TabButton icon="document-text-outline" iconFocused="document-text" label="Notes" />
         </TabTrigger>
 
         <TabTrigger name="taches" href="/(app)/taches" asChild>

@@ -22,6 +22,7 @@ import { useAuth } from '@/src/contexts/AuthContext';
 import { useProjets } from '@/src/hooks/useProjets';
 import { getNoteById, updateNote, deleteNote, type Note } from '@/src/db/notes';
 import { pushNote } from '@/src/services/sync';
+import { api } from '@/src/api/client';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
 
@@ -108,6 +109,11 @@ export default function NoteDetailScreen() {
           style: 'destructive',
           onPress: async () => {
             if (!note) return;
+            if (note.server_id) {
+              api.delete(`/notes/${note.server_id}`).catch((e) => {
+                console.warn('[Delete] Note', note.server_id, 'échoué:', e);
+              });
+            }
             await deleteNote(db, note.id);
             router.back();
           },

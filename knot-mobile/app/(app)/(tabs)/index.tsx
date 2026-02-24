@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { useAuth } from '@/src/contexts/AuthContext';
 import { useSync } from '@/src/contexts/SyncContext';
+import { useLocalSearchParams } from 'expo-router';
 import { useProjets } from '@/src/hooks/useProjets';
 import { useNotes } from '@/src/hooks/useNotes';
 import { AppHeader } from '@/src/components/shared/AppHeader';
@@ -176,11 +177,19 @@ function EmptyNotes({ hasFilter }: { hasFilter: boolean }) {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { projetId } = useLocalSearchParams<{ projetId?: string }>();
   const { sync } = useSync();
   const { projets, isLoading: projetsLoading, refresh: refreshProjets } = useProjets();
   const [selectedProjet, setSelectedProjet] = useState<Projet | null>(null);
   const { notes, isLoading: notesLoading, refresh: refreshNotes } = useNotes(selectedProjet?.id);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Sélectionne le projet passé en paramètre dès que la liste est chargée
+  useEffect(() => {
+    if (!projetId || projetsLoading || projets.length === 0) return;
+    const p = projets.find((x) => x.id === Number(projetId)) ?? null;
+    setSelectedProjet(p);
+  }, [projetId, projets, projetsLoading]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

@@ -17,8 +17,11 @@ import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useSync } from '@/src/contexts/SyncContext';
+import { useAuth } from '@/src/contexts/AuthContext';
 import { useProjets } from '@/src/hooks/useProjets';
 import { deleteProjet, updateProjet } from '@/src/db/projets';
+import { api } from '@/src/api/client';
+import { pushProjet } from '@/src/services/sync';
 import { useSQLiteContext } from 'expo-sqlite';
 import { AppHeader } from '@/src/components/shared/AppHeader';
 import { Colors } from '@/src/constants/colors';
@@ -188,6 +191,7 @@ export default function ProjetsScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
   const { sync } = useSync();
+  const { team } = useAuth();
   const { projets, isLoading, refresh, add } = useProjets();
   const [refreshing, setRefreshing] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -201,15 +205,21 @@ export default function ProjetsScreen() {
   }, [sync, refresh]);
 
   const handleCreate = useCallback(async (titre: string, description: string, couleur: string) => {
-    await add({ titre, description, couleur });
+    const projet = await add({ titre, description, couleur });
+    if (projet && team) {
+      pushProjet(db, projet.id, team.id); // fire and forget
+    }
     await refresh();
-  }, [add, refresh]);
+  }, [add, refresh, db, team]);
 
   const handleEdit = useCallback(async (titre: string, description: string, couleur: string) => {
     if (!editProjet) return;
     await updateProjet(db, editProjet.id, { titre, description, couleur });
+    if (team) {
+      pushProjet(db, editProjet.id, team.id); // fire and forget
+    }
     await refresh();
-  }, [editProjet, db, refresh]);
+  }, [editProjet, db, refresh, team]);
 
   const handleDelete = useCallback((projet: Projet) => {
     Alert.alert(
@@ -221,13 +231,18 @@ export default function ProjetsScreen() {
           text: 'Supprimer',
           style: 'destructive',
           onPress: async () => {
+            if (projet.server_id) {
+              api.delete(`/projets/${projet.server_id}`).catch((e) => {
+                console.warn('[Delete] Projet', projet.server_id, 'échoué:', e);
+              });
+            }
             await deleteProjet(db, projet.id);
             await refresh();
           },
         },
       ],
     );
-  }, [db, refresh]);
+  }, [db, refresh, team]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

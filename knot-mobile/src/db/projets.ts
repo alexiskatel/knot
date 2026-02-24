@@ -63,6 +63,7 @@ export async function createProjet(
     created_at: now,
     updated_at: now,
     sync_status: 'pending',
+    note_count: 0,
   };
 }
 

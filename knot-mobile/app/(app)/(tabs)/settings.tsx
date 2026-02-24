@@ -13,8 +13,11 @@ import Animated, { FadeIn } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import Storage from 'expo-sqlite/kv-store';
 
+import { useSQLiteContext } from 'expo-sqlite';
+
 import { useAuth } from '@/src/contexts/AuthContext';
 import { useSync } from '@/src/contexts/SyncContext';
+import { migrateDbIfNeeded } from '@/src/db/migrations';
 import { AppHeader } from '@/src/components/shared/AppHeader';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
@@ -61,10 +64,12 @@ function SectionHeader({ title }: { title: string }) {
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function SettingsScreen() {
+  const db = useSQLiteContext();
   const { user, team, signOut } = useAuth();
   const { isSyncing, lastSyncAt, sync } = useSync();
   const [showApiKey, setShowApiKey] = useState(false);
   const [isSyncingManual, setIsSyncingManual] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
   const apiKey = Storage.getItemSync('api_key') ?? '—';
   const maskedKey = apiKey !== '—' ? apiKey.slice(0, 3) + '•'.repeat(apiKey.length - 3) : '—';
@@ -86,6 +91,51 @@ export default function SettingsScreen() {
       [
         { text: 'Annuler', style: 'cancel' },
         { text: 'Se déconnecter', style: 'destructive', onPress: signOut },
+      ],
+    );
+  };
+
+  const handleResetDb = () => {
+    Alert.alert(
+      'Vider la base de données',
+      'Toutes vos données locales (notes, tâches, projets) seront supprimées. Vous serez renvoyé à la page de connexion.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Vider et reconnecter',
+          style: 'destructive',
+          onPress: async () => {
+            setIsResetting(true);
+            try {
+              // Supprimer toutes les tables dans l'ordre des dépendances
+              await db.execAsync(`
+                DROP TABLE IF EXISTS reactions;
+                DROP TABLE IF EXISTS commentaires;
+                DROP TABLE IF EXISTS notes;
+                DROP TABLE IF EXISTS taches;
+                DROP TABLE IF EXISTS projets;
+                DROP TABLE IF EXISTS users;
+                DROP TABLE IF EXISTS teams;
+                PRAGMA user_version = 0;
+              `);
+              // Recréer le schéma vide
+              await migrateDbIfNeeded(db);
+              // Vider le kv-store
+              Storage.removeItemSync('api_key');
+              Storage.removeItemSync('team_id');
+              Storage.removeItemSync('user');
+              Storage.removeItemSync('team');
+              Storage.removeItemSync('last_sync');
+              // Déconnecter (vide l'état React → navigation vers login)
+              await signOut();
+            } catch (e) {
+              console.error('[Reset DB]', e);
+              Alert.alert('Erreur', 'Impossible de vider la base. Réessayez.');
+            } finally {
+              setIsResetting(false);
+            }
+          },
+        },
       ],
     );
   };
@@ -162,6 +212,22 @@ export default function SettingsScreen() {
             icon="information-circle-outline"
             label="Version"
             value="1.0.0"
+          />
+        </View>
+
+        {/* Données locales */}
+        <SectionHeader title="Données" />
+        <View style={styles.section}>
+          <SettingRow
+            icon="trash-outline"
+            label="Vider la base de données locale"
+            onPress={isResetting ? undefined : handleResetDb}
+            danger
+            right={
+              isResetting
+                ? <ActivityIndicator size="small" color={Colors.error} />
+                : <Ionicons name="chevron-forward" size={16} color={Colors.textDisabled} />
+            }
           />
         </View>
 

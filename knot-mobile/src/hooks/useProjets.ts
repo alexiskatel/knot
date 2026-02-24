@@ -22,6 +22,8 @@ export function useProjets() {
     setIsLoading(true);
     try {
       const rows = await getAllProjets(db, localTeam.id);
+      console.log(localTeam.id);
+      
       setProjets(rows);
     } finally {
       setIsLoading(false);

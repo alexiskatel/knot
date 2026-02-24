@@ -123,28 +123,31 @@ export async function createTache(
 export async function updateTache(
   db: SQLiteDatabase,
   id: number,
-  data: Partial<Pick<Tache, 'titre' | 'description' | 'statut' | 'projet_id' | 'assigne_id' | 'due_date'>>,
+  data: {
+    titre?: string;
+    description?: string | null;
+    statut?: Tache['statut'];
+    projet_id?: number;
+    assigne_id?: number | null; // undefined = ne pas modifier, null = effacer
+    due_date?: string | null;   // undefined = ne pas modifier, null = effacer
+  },
 ): Promise<void> {
   const now = new Date().toISOString();
+  // Génération dynamique du SET pour supporter la mise à null explicite
+  const clauses: string[] = ["updated_at = ?", "sync_status = 'pending'"];
+  const params: (string | number | null)[] = [now];
+
+  if (data.titre !== undefined)    { clauses.push('titre = ?');       params.push(data.titre); }
+  if (data.description !== undefined) { clauses.push('description = ?'); params.push(data.description ?? null); }
+  if (data.statut !== undefined)   { clauses.push('statut = ?');      params.push(data.statut); }
+  if (data.projet_id !== undefined){ clauses.push('projet_id = ?');   params.push(data.projet_id); }
+  if ('assigne_id' in data)        { clauses.push('assigne_id = ?');  params.push(data.assigne_id ?? null); }
+  if ('due_date' in data)          { clauses.push('due_date = ?');    params.push(data.due_date ?? null); }
+
+  params.push(id);
   await db.runAsync(
-    `UPDATE taches
-     SET titre      = COALESCE(?, titre),
-         description = COALESCE(?, description),
-         statut     = COALESCE(?, statut),
-         projet_id  = COALESCE(?, projet_id),
-         assigne_id = COALESCE(?, assigne_id),
-         due_date   = COALESCE(?, due_date),
-         updated_at = ?,
-         sync_status = 'pending'
-     WHERE id = ?`,
-    data.titre ?? null,
-    data.description ?? null,
-    data.statut ?? null,
-    data.projet_id ?? null,
-    data.assigne_id ?? null,
-    data.due_date ?? null,
-    now,
-    id,
+    `UPDATE taches SET ${clauses.join(', ')} WHERE id = ?`,
+    ...params,
   );
 }
 

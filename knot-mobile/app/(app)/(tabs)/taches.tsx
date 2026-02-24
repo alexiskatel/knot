@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,15 +6,24 @@ import {
   FlatList,
   ScrollView,
   Pressable,
+  Modal,
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import { useSQLiteContext } from 'expo-sqlite';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useSync } from '@/src/contexts/SyncContext';
+import { useAuth } from '@/src/contexts/AuthContext';
 import { useTaches } from '@/src/hooks/useTaches';
 import { useProjets } from '@/src/hooks/useProjets';
 import { AppHeader } from '@/src/components/shared/AppHeader';
@@ -22,6 +31,9 @@ import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
 import type { Tache } from '@/src/db/taches';
 import type { Projet } from '@/src/db/projets';
+
+interface Membre { id: number; nom: string; prenom: string | null; }
+function membreLabel(m: Membre) { return m.prenom ? `${m.prenom} ${m.nom}` : m.nom; }
 
 // ─── Statut config ────────────────────────────────────────────────────────────
 
@@ -31,7 +43,7 @@ const STATUTS = [
   { key: 'done',     label: 'Terminé',    color: Colors.done },
 ] as const;
 
-type StatutFilter = 'all' | 'todo' | 'en_cours' | 'done';
+type StatutFilter = 'all' | 'todo' | 'en_cours' | 'done' | 'overdue';
 
 function statutLabel(s: string) {
   return STATUTS.find((x) => x.key === s)?.label ?? s;
@@ -40,7 +52,61 @@ function statutColor(s: string) {
   return STATUTS.find((x) => x.key === s)?.color ?? Colors.textSecondary;
 }
 
+// ─── Projet filter card ──────────────────────────────────────────────────────
+// Même style que les cartes de projet sur la page des notes
+
+function ProjetFilterCard({
+  projet,
+  selected,
+  count,
+  onPress,
+}: {
+  projet: Projet | null;
+  selected: boolean;
+  count: number;
+  onPress: () => void;
+}) {
+  const color = projet?.couleur ?? Colors.primary;
+  const opacity = useSharedValue(selected ? 1 : 0);
+  const overlayStyle = useAnimatedStyle(() => ({
+    opacity: withTiming(opacity.value, { duration: 180 }),
+  }));
+  opacity.value = selected ? 1 : 0;
+  const isAll = projet === null;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.projetCard, { borderColor: selected ? color : Colors.border }]}
+    >
+      <Animated.View
+        style={[StyleSheet.absoluteFill, styles.projetCardBg, { backgroundColor: color }, overlayStyle]}
+      />
+      {/* Cercles décoratifs */}
+      <View style={[styles.projetCardCircle1, { borderColor: color, opacity: selected ? 0.25 : 0.12 }]} />
+      <View style={[styles.projetCardCircle2, { borderColor: color, opacity: selected ? 0.15 : 0.07 }]} />
+
+      {/* Badge count */}
+      <View style={[styles.projetCardBadge, { backgroundColor: selected ? 'rgba(255,255,255,0.2)' : color + '18' }]}>
+        <Text style={[styles.projetCardBadgeText, { color: selected ? '#fff' : color }]}>{count}</Text>
+      </View>
+
+      {/* Label bas */}
+      <View style={styles.projetCardInner}>
+        {isAll
+          ? <Ionicons name="layers-outline" size={13} color={selected ? '#fff' : Colors.textSecondary} style={{ marginBottom: 3 }} />
+          : <View style={[styles.projetCardDot, { backgroundColor: selected ? 'rgba(255,255,255,0.9)' : color }]} />
+        }
+        <Text style={[styles.projetCardLabel, { color: selected ? '#fff' : Colors.textPrimary }]} numberOfLines={2}>
+          {isAll ? 'Toutes' : projet.titre}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
 // ─── Tache Card ───────────────────────────────────────────────────────────────
+// Carte compacte — une ligne titre, une ligne meta
 
 function TacheCard({ tache, onPress }: { tache: Tache; onPress: () => void }) {
   const color = tache.projet_couleur ?? Colors.primary;
@@ -55,58 +121,69 @@ function TacheCard({ tache, onPress }: { tache: Tache; onPress: () => void }) {
     ? new Date(tache.due_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
     : null;
 
-  const isOverdue = tache.due_date
-    && tache.statut !== 'done'
-    && new Date(tache.due_date) < new Date();
+  const now = Date.now();
+  const dueMs = tache.due_date ? new Date(tache.due_date).getTime() : null;
+  const isOverdue = dueMs !== null && tache.statut !== 'done' && dueMs < now;
+  const isDueSoon = dueMs !== null && tache.statut !== 'done' && !isOverdue
+    && (dueMs - now) <= 24 * 60 * 60 * 1000;
 
   return (
     <Pressable onPress={onPress} style={styles.card}>
       <View style={[styles.cardBar, { backgroundColor: color }]} />
+
+      {/* Cercles décoratifs en fond */}
+      <View style={[styles.cardCircle1, { borderColor: color }]} />
+      <View style={[styles.cardCircle2, { borderColor: color }]} />
+
       <View style={styles.cardContent}>
-        <View style={styles.cardHeader}>
+        {/* Ligne 1 : titre + badges urgence + pending */}
+        <View style={styles.cardRow}>
           <Text style={styles.cardTitle} numberOfLines={1}>{tache.titre}</Text>
-          {isPending && <Ionicons name="cloud-upload-outline" size={14} color={Colors.textDisabled} />}
+          <View style={styles.cardRowRight}>
+            {isOverdue && (
+              <View style={styles.overdueBadge}>
+                <Text style={styles.overdueBadgeText}>En retard</Text>
+              </View>
+            )}
+            {isDueSoon && (
+              <View style={styles.dueSoonBadge}>
+                <Text style={styles.dueSoonBadgeText}>Bientôt</Text>
+              </View>
+            )}
+            {isPending && <Ionicons name="cloud-upload-outline" size={13} color={Colors.textDisabled} />}
+          </View>
         </View>
 
-        {tache.description && (
-          <Text style={styles.cardDesc} numberOfLines={2}>{tache.description}</Text>
-        )}
-
+        {/* Ligne 2 : statut + assigné + date */}
         <View style={styles.cardMeta}>
           <View style={[styles.statutPill, { backgroundColor: sColor + '20' }]}>
             <View style={[styles.statutDot, { backgroundColor: sColor }]} />
-            <Text style={[styles.statutPillText, { color: sColor }]}>
-              {statutLabel(tache.statut)}
-            </Text>
+            <Text style={[styles.statutPillText, { color: sColor }]}>{statutLabel(tache.statut)}</Text>
           </View>
 
           <View style={styles.cardMetaRight}>
             {assigneLabel && (
-              <View style={styles.assigneRow}>
-                <Ionicons name="person-outline" size={11} color={Colors.textDisabled} />
-                <Text style={styles.assigneText} numberOfLines={1}>{assigneLabel}</Text>
+              <View style={styles.metaChip}>
+                <Ionicons name="person-outline" size={10} color={Colors.textDisabled} />
+                <Text style={styles.metaChipText} numberOfLines={1}>{assigneLabel}</Text>
               </View>
             )}
             {dueDateStr && (
-              <View style={styles.dueDateRow}>
+              <View style={styles.metaChip}>
                 <Ionicons
                   name="calendar-outline"
-                  size={11}
-                  color={isOverdue ? Colors.error : Colors.textDisabled}
+                  size={10}
+                  color={isOverdue ? Colors.error : isDueSoon ? Colors.warning : Colors.textDisabled}
                 />
-                <Text style={[styles.dueDateText, isOverdue && { color: Colors.error }]}>
-                  {dueDateStr}
-                </Text>
+                <Text style={[
+                  styles.metaChipText,
+                  isOverdue && { color: Colors.error },
+                  isDueSoon && !isOverdue && { color: Colors.warning },
+                ]}>{dueDateStr}</Text>
               </View>
             )}
           </View>
         </View>
-
-        {tache.projet_titre && (
-          <View style={[styles.projetTag, { backgroundColor: color + '18' }]}>
-            <Text style={[styles.projetTagText, { color }]}>{tache.projet_titre}</Text>
-          </View>
-        )}
       </View>
     </Pressable>
   );
@@ -134,12 +211,34 @@ function EmptyTaches({ hasFilter }: { hasFilter: boolean }) {
 
 export default function TachesScreen() {
   const router = useRouter();
+  const db = useSQLiteContext();
   const { sync } = useSync();
+  const { team } = useAuth();
   const { projets } = useProjets();
   const [selectedProjet, setSelectedProjet] = useState<Projet | null>(null);
   const [selectedStatut, setSelectedStatut] = useState<StatutFilter>('all');
+  const [selectedMembreId, setSelectedMembreId] = useState<number | null>(null);
+  const [membres, setMembres] = useState<Membre[]>([]);
+  const [showMembrePicker, setShowMembrePicker] = useState(false);
   const { taches, isLoading, refresh } = useTaches(selectedProjet?.id);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Chargement des membres de l'équipe
+  useEffect(() => {
+    async function loadMembres() {
+      if (!team) return;
+      const localTeam = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM teams WHERE server_id = ?', team.id,
+      );
+      if (!localTeam) return;
+      const rows = await db.getAllAsync<Membre>(
+        'SELECT id, nom, prenom FROM users WHERE team_id = ? ORDER BY prenom, nom',
+        localTeam.id,
+      );
+      setMembres(rows);
+    }
+    loadMembres();
+  }, [db, team]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -148,11 +247,28 @@ export default function TachesScreen() {
     setRefreshing(false);
   }, [sync, refresh]);
 
-  const filtered = selectedStatut === 'all'
-    ? taches
-    : taches.filter((t) => t.statut === selectedStatut);
+  const filtered = (() => {
+    let result = taches;
+    // Filtre membre
+    if (selectedMembreId !== null) {
+      result = result.filter((t) => t.assigne_id === selectedMembreId);
+    }
+    // Filtre statut
+    if (selectedStatut === 'overdue') {
+      const now = Date.now();
+      return result.filter((t) => t.due_date && t.statut !== 'done' && new Date(t.due_date).getTime() < now);
+    }
+    if (selectedStatut !== 'all') {
+      result = result.filter((t) => t.statut === selectedStatut);
+    }
+    return result;
+  })();
 
-  const hasFilter = selectedProjet !== null || selectedStatut !== 'all';
+  const overdueCount = taches.filter(
+    (t) => t.due_date && t.statut !== 'done' && new Date(t.due_date).getTime() < Date.now(),
+  ).length;
+
+  const hasFilter = selectedProjet !== null || selectedStatut !== 'all' || selectedMembreId !== null;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -184,42 +300,112 @@ export default function TachesScreen() {
             </Text>
           </Pressable>
         ))}
+        <Pressable
+          onPress={() => setSelectedStatut(selectedStatut === 'overdue' ? 'all' : 'overdue')}
+          style={[
+            styles.statutFilter,
+            selectedStatut === 'overdue' && { backgroundColor: Colors.error + '20', borderColor: Colors.error },
+          ]}
+        >
+          <Ionicons
+            name="alert-circle-outline"
+            size={12}
+            color={selectedStatut === 'overdue' ? Colors.error : Colors.textSecondary}
+          />
+          <Text style={[styles.statutFilterText, selectedStatut === 'overdue' && { color: Colors.error }]}>
+            En retard{overdueCount > 0 ? ` (${overdueCount})` : ''}
+          </Text>
+        </Pressable>
       </View>
 
-      {/* Filtres projets */}
-      {projets.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.projetChips}
-        >
+      {/* Filtre membre — dropdown */}
+      {membres.length > 0 && (
+        <View style={styles.membreFilterRow}>
           <Pressable
-            onPress={() => setSelectedProjet(null)}
-            style={[styles.projetChip, selectedProjet === null && styles.projetChipActive]}
+            onPress={() => setShowMembrePicker(true)}
+            style={[styles.membreDropdown, selectedMembreId !== null && styles.membreDropdownActive]}
           >
-            <Text style={[styles.projetChipText, selectedProjet === null && styles.projetChipTextActive]}>
-              Tous
+            <Ionicons
+              name="person-outline"
+              size={14}
+              color={selectedMembreId !== null ? Colors.primary : Colors.textSecondary}
+            />
+            <Text style={[styles.membreDropdownText, selectedMembreId !== null && styles.membreDropdownTextActive]}>
+              {selectedMembreId !== null
+                ? membreLabel(membres.find((m) => m.id === selectedMembreId)!)
+                : 'Tous les membres'}
             </Text>
+            <Ionicons name="chevron-down" size={13} color={selectedMembreId !== null ? Colors.primary : Colors.textSecondary} />
           </Pressable>
-          {projets.map((p) => (
-            <Pressable
-              key={p.id}
-              onPress={() => setSelectedProjet((prev) => prev?.id === p.id ? null : p)}
-              style={[
-                styles.projetChip,
-                selectedProjet?.id === p.id && { backgroundColor: p.couleur + '20', borderColor: p.couleur },
-              ]}
-            >
-              <View style={[styles.projetChipDot, { backgroundColor: p.couleur }]} />
-              <Text style={[
-                styles.projetChipText,
-                selectedProjet?.id === p.id && { color: p.couleur },
-              ]}>
-                {p.titre}
-              </Text>
+          {selectedMembreId !== null && (
+            <Pressable onPress={() => setSelectedMembreId(null)} style={styles.membreClearBtn} hitSlop={8}>
+              <Ionicons name="close-circle" size={16} color={Colors.textDisabled} />
             </Pressable>
-          ))}
-        </ScrollView>
+          )}
+        </View>
+      )}
+
+      {/* Modal picker membre */}
+      <Modal visible={showMembrePicker} transparent animationType="slide">
+        <Pressable style={styles.modalOverlay} onPress={() => setShowMembrePicker(false)} />
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHandle} />
+          <Text style={styles.modalTitle}>Filtrer par membre</Text>
+          <FlatList
+            data={[{ id: -1, nom: 'Tous les membres', prenom: null } as Membre, ...membres]}
+            keyExtractor={(m) => String(m.id)}
+            renderItem={({ item }) => {
+              const isAll = item.id === -1;
+              const isSelected = isAll ? selectedMembreId === null : selectedMembreId === item.id;
+              return (
+                <Pressable
+                  onPress={() => {
+                    setSelectedMembreId(isAll ? null : item.id);
+                    setShowMembrePicker(false);
+                  }}
+                  style={[styles.modalOption, isSelected && styles.modalOptionSelected]}
+                >
+                  <Ionicons
+                    name={isAll ? 'people-outline' : 'person-circle-outline'}
+                    size={20}
+                    color={isSelected ? Colors.primary : Colors.textSecondary}
+                  />
+                  <Text style={[styles.modalOptionText, isSelected && { color: Colors.primary, fontWeight: '600' }]}>
+                    {isAll ? 'Tous les membres' : membreLabel(item)}
+                  </Text>
+                  {isSelected && <Ionicons name="checkmark" size={18} color={Colors.primary} />}
+                </Pressable>
+              );
+            }}
+          />
+        </View>
+      </Modal>
+
+      {/* Filtres projets — style cartes avec cercles + count */}
+      {projets.length > 0 && (
+        <Animated.View entering={FadeInDown.delay(200).springify()}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.projetCardsRow}
+          >
+            <ProjetFilterCard
+              projet={null}
+              selected={selectedProjet === null}
+              count={taches.length}
+              onPress={() => setSelectedProjet(null)}
+            />
+            {projets.map((p) => (
+              <ProjetFilterCard
+                key={p.id}
+                projet={p}
+                selected={selectedProjet?.id === p.id}
+                count={taches.filter((t) => t.projet_id === p.id).length}
+                onPress={() => setSelectedProjet((prev) => prev?.id === p.id ? null : p)}
+              />
+            ))}
+          </ScrollView>
+        </Animated.View>
       )}
 
       {/* Liste */}
@@ -296,32 +482,107 @@ const styles = StyleSheet.create({
   },
   statutFilterText: { fontSize: 13, fontWeight: '500', color: Colors.textSecondary },
   statutFilterTextActive: { color: Colors.primary },
-  statutDot: { width: 7, height: 7, borderRadius: 3.5 },
+  statutDot: { width: 6, height: 6, borderRadius: 3 },
 
-  // Projet chips
-  projetChips: {
-    paddingHorizontal: Layout.screenPaddingH,
-    paddingBottom: 14,
-    gap: 8,
-  },
-  projetChip: {
+  // Membre filter dropdown
+  membreFilterRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    paddingHorizontal: Layout.screenPaddingH,
+    paddingBottom: 12,
+    gap: 8,
+  },
+  membreDropdown: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+    paddingVertical: 8,
+    borderRadius: 10,
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  projetChipActive: {
-    backgroundColor: Colors.primary + '18',
+  membreDropdownActive: {
+    backgroundColor: Colors.primary + '0E',
     borderColor: Colors.primary,
   },
-  projetChipDot: { width: 8, height: 8, borderRadius: 4 },
-  projetChipText: { fontSize: 13, fontWeight: '500', color: Colors.textSecondary },
-  projetChipTextActive: { color: Colors.primary },
+  membreDropdownText: { flex: 1, fontSize: 13, fontWeight: '500', color: Colors.textSecondary },
+  membreDropdownTextActive: { color: Colors.primary },
+  membreClearBtn: { padding: 2 },
+
+  // Modal membre picker
+  modalOverlay: { flex: 1, backgroundColor: Colors.overlay },
+  modalSheet: {
+    position: 'absolute',
+    bottom: 0, left: 0, right: 0,
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 40,
+    maxHeight: '60%',
+  },
+  modalHandle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: Colors.border,
+    alignSelf: 'center',
+    marginTop: 12, marginBottom: 8,
+  },
+  modalTitle: {
+    fontSize: 16, fontWeight: '600', color: Colors.textPrimary,
+    paddingHorizontal: Layout.screenPaddingH, paddingBottom: 12,
+  },
+  modalOption: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: Layout.screenPaddingH, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: Colors.borderLight,
+  },
+  modalOptionSelected: { backgroundColor: Colors.surfaceAlt },
+  modalOptionText: { flex: 1, fontSize: 15, color: Colors.textPrimary },
+
+  // Projet filter cards (style identique à la page notes)
+  projetCardsRow: {
+    paddingHorizontal: Layout.screenPaddingH,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  projetCard: {
+    width: 100,
+    height: 74,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    backgroundColor: Colors.surface,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+  },
+  projetCardBg: { borderRadius: 14, opacity: 0 },
+  projetCardCircle1: {
+    position: 'absolute',
+    top: -16, right: -16,
+    width: 64, height: 64,
+    borderRadius: 32,
+    borderWidth: 14,
+  },
+  projetCardCircle2: {
+    position: 'absolute',
+    top: 8, right: 14,
+    width: 32, height: 32,
+    borderRadius: 16,
+    borderWidth: 7,
+  },
+  projetCardBadge: {
+    position: 'absolute',
+    top: 7, right: 8,
+    minWidth: 20, height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  projetCardBadgeText: { fontSize: 10, fontWeight: '700' },
+  projetCardInner: { padding: 8, gap: 3 },
+  projetCardDot: { width: 7, height: 7, borderRadius: 3.5, marginBottom: 2 },
+  projetCardLabel: { fontSize: 11, fontWeight: '600', lineHeight: 14 },
 
   // List
   list: {
@@ -331,59 +592,79 @@ const styles = StyleSheet.create({
   },
   loader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
-  // Card
+  // Tache card — compacte
   card: {
     backgroundColor: Colors.surface,
     borderRadius: Layout.cardRadius,
     flexDirection: 'row',
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
-    shadowRadius: 8,
+    shadowRadius: 6,
     elevation: 2,
   },
   cardBar: { width: 4 },
-  cardContent: { flex: 1, padding: 14, gap: 6 },
-  cardHeader: {
+  // Cercles décoratifs en fond de carte
+  cardCircle1: {
+    position: 'absolute',
+    top: -20, right: -20,
+    width: 70, height: 70,
+    borderRadius: 35,
+    borderWidth: 14,
+    opacity: 0.07,
+  },
+  cardCircle2: {
+    position: 'absolute',
+    top: 6, right: 20,
+    width: 36, height: 36,
+    borderRadius: 18,
+    borderWidth: 8,
+    opacity: 0.05,
+  },
+  cardContent: { flex: 1, paddingHorizontal: 12, paddingVertical: 10, gap: 5 },
+  cardRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
   },
-  cardTitle: { flex: 1, fontSize: 15, fontWeight: '600', color: Colors.textPrimary },
-  cardDesc: { fontSize: 13, color: Colors.textSecondary, lineHeight: 18 },
+  cardTitle: { flex: 1, fontSize: 14, fontWeight: '600', color: Colors.textPrimary },
   cardMeta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 2,
   },
-  cardMetaRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  cardMetaRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 
   statutPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
   },
-  statutPillText: { fontSize: 11, fontWeight: '600' },
+  statutPillText: { fontSize: 10, fontWeight: '600' },
 
-  assigneRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  assigneText: { fontSize: 11, color: Colors.textDisabled, maxWidth: 80 },
-  dueDateRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  dueDateText: { fontSize: 11, color: Colors.textDisabled },
+  metaChip: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  metaChipText: { fontSize: 10, color: Colors.textDisabled, maxWidth: 70 },
 
-  projetTag: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    marginTop: 2,
+  cardRowRight: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  overdueBadge: {
+    backgroundColor: Colors.error + '22',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
   },
-  projetTagText: { fontSize: 11, fontWeight: '600' },
+  overdueBadgeText: { fontSize: 9, fontWeight: '700', color: Colors.error },
+  dueSoonBadge: {
+    backgroundColor: Colors.warning + '22',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  dueSoonBadgeText: { fontSize: 9, fontWeight: '700', color: Colors.warning },
 
   // Empty
   empty: { alignItems: 'center', paddingTop: 60, gap: 10 },

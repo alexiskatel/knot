@@ -203,7 +203,9 @@ export async function syncAll(
   // ── Tâches (pull) ─────────────────────────────────────────────────────────
   await safeSync('taches', async () => {
     const res = await api.get<any>(`/teams/${teamServerId}/taches?all=1`);
+    
     const taches = extractList<ServerTache>(res);
+    console.log('Ha ', taches);
     for (const t of taches) {
       const projetRow = await db.getFirstAsync<{ id: number }>(
         'SELECT id FROM projets WHERE server_id = ?', t.projet_id,
@@ -248,6 +250,16 @@ export async function syncAll(
   });
 
   // ── Push pending locaux (offline-first) ───────────────────────────────────
+  await safeSync('push-projets-pending', async () => {
+    const pending = await db.getAllAsync<{ id: number }>(
+      "SELECT id FROM projets WHERE sync_status = 'pending' AND team_id = ?",
+      teamLocalId,
+    );
+    for (const p of pending) {
+      await pushProjet(db, p.id, teamServerId);
+    }
+  });
+
   await safeSync('push-notes-pending', async () => {
     const pending = await db.getAllAsync<{ id: number }>(
       "SELECT id FROM notes WHERE sync_status = 'pending' AND team_id = ?",
@@ -271,6 +283,41 @@ export async function syncAll(
 
 // ── Push sync ─────────────────────────────────────────────────────────────────
 // Appelé après chaque création/modification locale pour tenter une sync immédiate
+
+export async function pushProjet(
+  db: SQLiteDatabase,
+  projetLocalId: number,
+  teamServerId: number,
+): Promise<void> {
+  const projet = await db.getFirstAsync<any>(
+    'SELECT * FROM projets WHERE id = ?',
+    projetLocalId,
+  );
+  if (!projet) return;
+
+  const payload = {
+    titre: projet.titre,
+    description: projet.description ?? null,
+    couleur: projet.couleur,
+    statut: projet.statut,
+    team_id: teamServerId,
+  };
+
+  try {
+    if (projet.server_id) {
+      await api.put(`/projets/${projet.server_id}`, payload);
+    } else {
+      const res = await api.post<any>('/projets', { ...payload, sync_id: projet.sync_id });
+      const created = res.list;
+      if (created?.id) {
+        await db.runAsync('UPDATE projets SET server_id = ? WHERE id = ?', created.id, projetLocalId);
+      }
+    }
+    await db.runAsync(`UPDATE projets SET sync_status = 'synced' WHERE id = ?`, projetLocalId);
+  } catch (e) {
+    console.warn('[Push] Projet', projetLocalId, 'échoué:', e);
+  }
+}
 
 export async function pushNote(
   db: SQLiteDatabase,

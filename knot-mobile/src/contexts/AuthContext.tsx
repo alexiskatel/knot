@@ -75,14 +75,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     Storage.setItemSync('user', JSON.stringify(authUser));
     Storage.setItemSync('team', JSON.stringify(authTeam));
 
-    // Persist team and user to local SQLite
+    // Persist team to local SQLite — INSERT OR IGNORE preserves the existing row id
+    // (INSERT OR REPLACE would delete+reinsert, changing the auto-increment id and
+    //  orphaning all projets/notes/taches that reference the old team_id)
     await db.runAsync(
-      `INSERT OR REPLACE INTO teams (server_id, nom, code_unique, couleur_primaire)
+      `INSERT OR IGNORE INTO teams (server_id, nom, code_unique, couleur_primaire)
        VALUES (?, ?, ?, ?)`,
       authTeam.id,
       authTeam.nom,
       '',
       authTeam.couleur_primaire,
+    );
+    await db.runAsync(
+      `UPDATE teams SET nom = ?, couleur_primaire = ? WHERE server_id = ?`,
+      authTeam.nom,
+      authTeam.couleur_primaire,
+      authTeam.id,
     );
 
     const teamRow = await db.getFirstAsync<{ id: number }>(
@@ -92,7 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (teamRow) {
       await db.runAsync(
-        `INSERT OR REPLACE INTO users (server_id, nom, prenom, email, team_id, api_key)
+        `INSERT OR IGNORE INTO users (server_id, nom, prenom, email, team_id, api_key)
          VALUES (?, ?, ?, ?, ?, ?)`,
         authUser.id,
         authUser.nom,
@@ -100,6 +108,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         authUser.email ?? '',
         teamRow.id,
         apiKey,
+      );
+      await db.runAsync(
+        `UPDATE users SET nom = ?, prenom = ?, email = ?, api_key = ? WHERE server_id = ?`,
+        authUser.nom,
+        authUser.prenom ?? '',
+        authUser.email ?? '',
+        apiKey,
+        authUser.id,
       );
     }
 
