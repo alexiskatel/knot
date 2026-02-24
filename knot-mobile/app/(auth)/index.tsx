@@ -212,6 +212,10 @@ export default function AuthScreen() {
             <View style={[styles.stepDot, step === 'team' && styles.stepDotActive]} />
             <View style={[styles.stepDot, step === 'key' && styles.stepDotActive]} />
           </Animated.View>
+
+          <Text style={styles.madeby}>
+            Made by Alexis Katel & Calyte Espoir with ❤️
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -219,9 +223,15 @@ export default function AuthScreen() {
 }
 
 const styles = StyleSheet.create({
+  
   safe: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  madeby:  {
+    flex: 1,
+    textAlign: "center",
+    paddingTop: 30,
   },
   kav: {
     flex: 1,

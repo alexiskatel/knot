@@ -1,26 +1,25 @@
-import { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  ScrollView,
-  Alert,
-  ActivityIndicator,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated, { FadeIn } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import Storage from 'expo-sqlite/kv-store';
+import { useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useSQLiteContext } from 'expo-sqlite';
 
-import { useAuth } from '@/src/contexts/AuthContext';
-import { useSync } from '@/src/contexts/SyncContext';
-import { migrateDbIfNeeded } from '@/src/db/migrations';
 import { AppHeader } from '@/src/components/shared/AppHeader';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
+import { useAuth } from '@/src/contexts/AuthContext';
+import { useSync } from '@/src/contexts/SyncContext';
+import { migrateDbIfNeeded } from '@/src/db/migrations';
 
 // ─── Section item ─────────────────────────────────────────────────────────────
 
@@ -242,6 +241,10 @@ export default function SettingsScreen() {
           />
         </View>
 
+        <Text style={styles.madeby}>
+          Made by Alexis Katel & Calyte Espoir with ❤️
+        </Text>
+
         <View style={{ height: 40 }} />
       </ScrollView>
     </SafeAreaView>
@@ -258,6 +261,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: Colors.primary,
     letterSpacing: -0.5,
+  },
+
+  madeby:  {
+    flex: 1,
+    textAlign: "center",
+    paddingTop: 30,
   },
 
   // Identity card
