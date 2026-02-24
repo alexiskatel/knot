@@ -23,6 +23,7 @@ import { api } from '@/src/api/client';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
 import { useAuth } from '@/src/contexts/AuthContext';
+import { useSync } from '@/src/contexts/SyncContext';
 import {
   createCommentaire,
   deleteCommentaire,
@@ -69,6 +70,7 @@ export default function TacheDetailScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
   const { team, user } = useAuth();
+  const { bumpSyncVersion } = useSync();
   const { projets } = useProjets();
 
   const [tache, setTache] = useState<Tache | null>(null);
@@ -259,6 +261,7 @@ export default function TacheDetailScreen() {
               ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', user.id)
               : null;
             await softDeleteTache(db, tache.id, localUser?.id ?? 0);
+            bumpSyncVersion();
             router.back();
           },
         },

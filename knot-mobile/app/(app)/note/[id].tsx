@@ -19,6 +19,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useAuth } from '@/src/contexts/AuthContext';
+import { useSync } from '@/src/contexts/SyncContext';
 import { useProjets } from '@/src/hooks/useProjets';
 import { getNoteById, updateNote, softDeleteNote, type Note } from '@/src/db/notes';
 import {
@@ -61,6 +62,7 @@ export default function NoteDetailScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
   const { team, user } = useAuth();
+  const { bumpSyncVersion } = useSync();
   const { projets } = useProjets();
 
   const [note, setNote] = useState<Note | null>(null);
@@ -191,6 +193,7 @@ export default function NoteDetailScreen() {
               ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', user.id)
               : null;
             await softDeleteNote(db, note.id, localUser?.id ?? 0);
+            bumpSyncVersion();
             router.back();
           },
         },

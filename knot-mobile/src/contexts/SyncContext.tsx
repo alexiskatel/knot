@@ -10,8 +10,9 @@ import { useAuth } from './AuthContext';
 interface SyncContextValue {
   isSyncing: boolean;
   lastSyncAt: Date | null;
-  syncVersion: number;   // s'incrémente après chaque sync réussie
+  syncVersion: number;   // s'incrémente après chaque sync réussie ou bump local
   sync: () => Promise<void>;
+  bumpSyncVersion: () => void; // force les hooks à relire SQLite sans sync réseau
 }
 
 const SyncContext = createContext<SyncContextValue | null>(null);
@@ -56,11 +57,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     if (user && team) sync();
   }, [user?.id]);
 
-  // Sync à chaque changement de page (throttle 5s)
+  // Sync à chaque changement de page
   useEffect(() => {
     if (!user || !team) return;
-    const elapsed = Date.now() - lastSyncAtRef.current;
-    if (elapsed > 5_000) sync();
+    sync();
   }, [pathname]);
 
   // Sync quand l'app revient au premier plan
@@ -72,8 +72,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     return () => sub.remove();
   }, [user?.id]);
 
+  const bumpSyncVersion = () => setSyncVersion((v) => v + 1);
+
   return (
-    <SyncContext.Provider value={{ isSyncing, lastSyncAt, syncVersion, sync }}>
+    <SyncContext.Provider value={{ isSyncing, lastSyncAt, syncVersion, sync, bumpSyncVersion }}>
       {children}
     </SyncContext.Provider>
   );
