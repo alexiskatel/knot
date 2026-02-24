@@ -153,13 +153,15 @@ export async function syncAll(
     const res = await api.get<any>(`/teams/${teamServerId}/projets?all=1`);
     const projets = extractList<ServerProjetWithDelete>(res);
     for (const p of projets) {
-      const existing = await db.getFirstAsync<{ id: number }>(
-        'SELECT id FROM projets WHERE server_id = ?', p.id,
+      const existing = await db.getFirstAsync<{ id: number; sync_status: string; updated_at: string }>(
+        'SELECT id, sync_status, updated_at FROM projets WHERE server_id = ?', p.id,
       );
       const deletedByRow = p.deleted_by
         ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', p.deleted_by)
         : null;
       if (existing) {
+        // Conflict resolution : local pending + plus récent → skip (sera pushé)
+        if (existing.sync_status === 'pending' && existing.updated_at > p.updated_at) continue;
         await db.runAsync(
           `UPDATE projets
            SET titre = ?, description = ?, couleur = ?, statut = ?, updated_at = ?, deleted_at = ?, deleted_by = ?, sync_status = 'synced'
@@ -194,14 +196,16 @@ export async function syncAll(
         'SELECT id FROM users WHERE server_id = ?', n.auteur_id,
       );
 
-      const existing = await db.getFirstAsync<{ id: number }>(
-        'SELECT id FROM notes WHERE server_id = ?', n.id,
+      const existing = await db.getFirstAsync<{ id: number; sync_status: string; updated_at: string }>(
+        'SELECT id, sync_status, updated_at FROM notes WHERE server_id = ?', n.id,
       );
       const statut = normalizeStatutNote(n.statut ?? 'publie');
       const noteDeletedByRow = n.deleted_by
         ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', n.deleted_by)
         : null;
       if (existing) {
+        // Conflict resolution : local pending + plus récent → skip (sera pushé)
+        if (existing.sync_status === 'pending' && existing.updated_at > n.updated_at) continue;
         await db.runAsync(
           `UPDATE notes
            SET titre = ?, contenu = ?, statut = ?, projet_id = ?, updated_at = ?, deleted_at = ?, deleted_by = ?, sync_status = 'synced'
@@ -228,7 +232,6 @@ export async function syncAll(
     const res = await api.get<any>(`/teams/${teamServerId}/taches?all=1`);
     
     const taches = extractList<ServerTache>(res);
-    console.log('Ha ', taches);
     for (const t of taches) {
       const projetRow = await db.getFirstAsync<{ id: number }>(
         'SELECT id FROM projets WHERE server_id = ?', t.projet_id,
@@ -244,13 +247,15 @@ export async function syncAll(
           )
         : null;
 
-      const existing = await db.getFirstAsync<{ id: number }>(
-        'SELECT id FROM taches WHERE server_id = ?', t.id,
+      const existing = await db.getFirstAsync<{ id: number; sync_status: string; updated_at: string }>(
+        'SELECT id, sync_status, updated_at FROM taches WHERE server_id = ?', t.id,
       );
       const tacheDeletedByRow = t.deleted_by
         ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', t.deleted_by)
         : null;
       if (existing) {
+        // Conflict resolution : local pending + plus récent → skip (sera pushé)
+        if (existing.sync_status === 'pending' && existing.updated_at > t.updated_at) continue;
         await db.runAsync(
           `UPDATE taches
            SET titre = ?, description = ?, statut = ?, projet_id = ?,
