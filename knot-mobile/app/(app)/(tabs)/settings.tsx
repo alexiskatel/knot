@@ -216,6 +216,19 @@ export default function SettingsScreen() {
           />
         </View>
 
+
+        {/* Déconnexion */}
+        <SectionHeader title="" />
+        <View style={styles.section}>
+          <SettingRow
+            icon="log-out-outline"
+            label="Se déconnecter"
+            onPress={handleSignOut}
+            danger
+          />
+        </View>
+
+
         {/* Données locales */}
         <SectionHeader title="Données" />
         <View style={styles.section}>
@@ -229,17 +242,6 @@ export default function SettingsScreen() {
                 ? <ActivityIndicator size="small" color={Colors.error} />
                 : <Ionicons name="chevron-forward" size={16} color={Colors.textDisabled} />
             }
-          />
-        </View>
-
-        {/* Déconnexion */}
-        <SectionHeader title="" />
-        <View style={styles.section}>
-          <SettingRow
-            icon="log-out-outline"
-            label="Se déconnecter"
-            onPress={handleSignOut}
-            danger
           />
         </View>
 
