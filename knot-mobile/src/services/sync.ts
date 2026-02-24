@@ -20,6 +20,20 @@ async function safeSync(label: string, fn: () => Promise<void>): Promise<void> {
   }
 }
 
+// Le backend stocke les statuts avec accents (publié/archivé).
+// Le mobile utilise les versions sans accent (publie/archive).
+function normalizeStatutNote(s: string): string {
+  if (s === 'publié')  return 'publie';
+  if (s === 'archivé') return 'archive';
+  return s;
+}
+
+function accentStatutNote(s: string): string {
+  if (s === 'publie')  return 'publié';
+  if (s === 'archive') return 'archivé';
+  return s;
+}
+
 // ── Types serveur ─────────────────────────────────────────────────────────────
 
 interface ServerTeam {
@@ -163,12 +177,13 @@ export async function syncAll(
       const existing = await db.getFirstAsync<{ id: number }>(
         'SELECT id FROM notes WHERE server_id = ?', n.id,
       );
+      const statut = normalizeStatutNote(n.statut ?? 'publie');
       if (existing) {
         await db.runAsync(
           `UPDATE notes
            SET titre = ?, contenu = ?, statut = ?, projet_id = ?, updated_at = ?, sync_status = 'synced'
            WHERE server_id = ?`,
-          n.titre, n.contenu ?? '', n.statut ?? 'publie',
+          n.titre, n.contenu ?? '', statut,
           projetRow.id, n.updated_at, n.id,
         );
       } else {
@@ -177,7 +192,7 @@ export async function syncAll(
              (server_id, sync_id, titre, contenu, statut, projet_id, auteur_id, team_id, created_at, updated_at, sync_status)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
           n.id, randomUUID(), n.titre, n.contenu ?? '',
-          n.statut ?? 'publie', projetRow.id,
+          statut, projetRow.id,
           auteurRow?.id ?? 1, teamLocalId,
           n.created_at, n.updated_at,
         );
@@ -185,7 +200,7 @@ export async function syncAll(
     }
   });
 
-  // ── Tâches ────────────────────────────────────────────────────────────────
+  // ── Tâches (pull) ─────────────────────────────────────────────────────────
   await safeSync('taches', async () => {
     const res = await api.get<any>(`/teams/${teamServerId}/taches?all=1`);
     const taches = extractList<ServerTache>(res);
@@ -231,6 +246,27 @@ export async function syncAll(
       }
     }
   });
+
+  // ── Push pending locaux (offline-first) ───────────────────────────────────
+  await safeSync('push-notes-pending', async () => {
+    const pending = await db.getAllAsync<{ id: number }>(
+      "SELECT id FROM notes WHERE sync_status = 'pending' AND team_id = ?",
+      teamLocalId,
+    );
+    for (const n of pending) {
+      await pushNote(db, n.id, teamServerId);
+    }
+  });
+
+  await safeSync('push-taches-pending', async () => {
+    const pending = await db.getAllAsync<{ id: number }>(
+      "SELECT id FROM taches WHERE sync_status = 'pending' AND team_id = ?",
+      teamLocalId,
+    );
+    for (const t of pending) {
+      await pushTache(db, t.id, teamServerId);
+    }
+  });
 }
 
 // ── Push sync ─────────────────────────────────────────────────────────────────
@@ -251,41 +287,34 @@ export async function pushNote(
   );
   if (!note) return;
 
+  // Si le projet ou l'auteur n'a pas encore de server_id, on ne peut pas pousser
+  if (!note.projet_server_id || !note.auteur_server_id) {
+    console.warn('[Push] Note', noteLocalId, '- projet ou auteur sans server_id, push ignoré');
+    return;
+  }
+
+  const payload = {
+    titre: note.titre,
+    contenu: note.contenu,
+    statut: accentStatutNote(note.statut), // mapping sans-accent → accentué
+    projet_id: note.projet_server_id,
+    auteur_id: note.auteur_server_id,
+    team_id: teamServerId,
+  };
+
   try {
     if (note.server_id) {
-      // Mise à jour
-      await api.put(`/notes/${note.server_id}`, {
-        titre: note.titre,
-        contenu: note.contenu,
-        statut: note.statut,
-        projet_id: note.projet_server_id,
-        auteur_id: note.auteur_server_id,
-        team_id: teamServerId,
-      });
+      await api.put(`/notes/${note.server_id}`, payload);
     } else {
-      // Création
-      const res = await api.post<any>('/notes', {
-        titre: note.titre,
-        contenu: note.contenu,
-        statut: note.statut,
-        projet_id: note.projet_server_id,
-        auteur_id: note.auteur_server_id,
-        team_id: teamServerId,
-        sync_id: note.sync_id,
-      });
+      const res = await api.post<any>('/notes', { ...payload, sync_id: note.sync_id });
       const created = res.list;
       if (created?.id) {
-        await db.runAsync(
-          'UPDATE notes SET server_id = ? WHERE id = ?',
-          created.id, noteLocalId,
-        );
+        await db.runAsync('UPDATE notes SET server_id = ? WHERE id = ?', created.id, noteLocalId);
       }
     }
-    await db.runAsync(
-      `UPDATE notes SET sync_status = 'synced' WHERE id = ?`,
-      noteLocalId,
-    );
-  } catch {
+    await db.runAsync(`UPDATE notes SET sync_status = 'synced' WHERE id = ?`, noteLocalId);
+  } catch (e) {
+    console.warn('[Push] Note', noteLocalId, 'échoué:', e);
     // Offline ou erreur → reste en pending, badge visible
   }
 }
@@ -308,38 +337,35 @@ export async function pushTache(
   );
   if (!tache) return;
 
-  try {
-    const payload = {
-      titre: tache.titre,
-      description: tache.description,
-      statut: tache.statut,
-      projet_id: tache.projet_server_id,
-      auteur_id: tache.auteur_server_id,
-      assigne_id: tache.assigne_server_id ?? null,
-      team_id: teamServerId,
-      due_date: tache.due_date ?? null,
-    };
+  if (!tache.projet_server_id || !tache.auteur_server_id) {
+    console.warn('[Push] Tache', tacheLocalId, '- projet ou auteur sans server_id, push ignoré');
+    return;
+  }
 
+  const payload = {
+    titre: tache.titre,
+    description: tache.description ?? null,
+    statut: tache.statut,
+    projet_id: tache.projet_server_id,
+    auteur_id: tache.auteur_server_id,
+    assigne_id: tache.assigne_server_id ?? null,
+    team_id: teamServerId,
+    due_date: tache.due_date ?? null,
+  };
+
+  try {
     if (tache.server_id) {
       await api.put(`/taches/${tache.server_id}`, payload);
     } else {
-      const res = await api.post<any>('/taches', {
-        ...payload,
-        sync_id: tache.sync_id,
-      });
+      const res = await api.post<any>('/taches', { ...payload, sync_id: tache.sync_id });
       const created = res.list;
       if (created?.id) {
-        await db.runAsync(
-          'UPDATE taches SET server_id = ? WHERE id = ?',
-          created.id, tacheLocalId,
-        );
+        await db.runAsync('UPDATE taches SET server_id = ? WHERE id = ?', created.id, tacheLocalId);
       }
     }
-    await db.runAsync(
-      `UPDATE taches SET sync_status = 'synced' WHERE id = ?`,
-      tacheLocalId,
-    );
-  } catch {
+    await db.runAsync(`UPDATE taches SET sync_status = 'synced' WHERE id = ?`, tacheLocalId);
+  } catch (e) {
+    console.warn('[Push] Tache', tacheLocalId, 'échoué:', e);
     // Offline → reste en pending
   }
 }

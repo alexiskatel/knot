@@ -25,6 +25,7 @@ import { useAuth } from '@/src/contexts/AuthContext';
 import { useSync } from '@/src/contexts/SyncContext';
 import { useProjets } from '@/src/hooks/useProjets';
 import { useNotes } from '@/src/hooks/useNotes';
+import { AppHeader } from '@/src/components/shared/AppHeader';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
 import type { Note } from '@/src/db/notes';
@@ -175,7 +176,6 @@ function EmptyNotes({ hasFilter }: { hasFilter: boolean }) {
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { team } = useAuth();
   const { sync } = useSync();
   const { projets, isLoading: projetsLoading, refresh: refreshProjets } = useProjets();
   const [selectedProjet, setSelectedProjet] = useState<Projet | null>(null);
@@ -194,16 +194,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
 
-      {/* Header */}
-      <Animated.View entering={FadeIn.duration(300)} style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>knot</Text>
-          {team && <Text style={styles.headerTeam}>{team.nom}</Text>}
-        </View>
-        <Pressable style={styles.headerAction} onPress={() => router.push('/(app)/settings')}>
-          <Ionicons name="ellipsis-horizontal" size={22} color={Colors.textPrimary} />
-        </Pressable>
-      </Animated.View>
+      <AppHeader />
 
       {/* Project filter */}
       {!projetsLoading && projets.length > 0 && (
@@ -281,36 +272,6 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: Colors.background,
-  },
-
-  // Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Layout.screenPaddingH,
-    paddingVertical: 14,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: Colors.primary,
-    letterSpacing: -0.5,
-  },
-  headerTeam: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-    marginTop: 1,
-  },
-  headerAction: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
 
   // Projet cards (filtre horizontal)

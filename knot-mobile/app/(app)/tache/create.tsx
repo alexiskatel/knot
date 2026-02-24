@@ -19,21 +19,28 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { useAuth } from '@/src/contexts/AuthContext';
 import { useProjets } from '@/src/hooks/useProjets';
-import { createNote } from '@/src/db/notes';
-import { pushNote } from '@/src/services/sync';
+import { createTache, type Tache } from '@/src/db/taches';
+import { pushTache } from '@/src/services/sync';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
 
-export default function CreateNoteScreen() {
+const STATUTS: { key: Tache['statut']; label: string; color: string }[] = [
+  { key: 'todo',     label: 'À faire',  color: Colors.todo },
+  { key: 'en_cours', label: 'En cours', color: Colors.en_cours },
+  { key: 'done',     label: 'Terminé',  color: Colors.done },
+];
+
+export default function CreateTacheScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
   const { user, team } = useAuth();
   const { projets } = useProjets();
 
   const [titre, setTitre] = useState('');
-  const [contenu, setContenu] = useState('');
+  const [description, setDescription] = useState('');
   const [selectedProjetId, setSelectedProjetId] = useState<number | null>(null);
-  const [statut, setStatut] = useState<'brouillon' | 'publie'>('publie');
+  const [statut, setStatut] = useState<Tache['statut']>('todo');
+  const [dueDate, setDueDate] = useState('');
   const [showProjetPicker, setShowProjetPicker] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -57,21 +64,25 @@ export default function CreateNoteScreen() {
       );
       if (!localTeam || !localUser) return;
 
-      const note = await createNote(db, {
+      // Validate due_date format (YYYY-MM-DD)
+      const parsedDate = dueDate.trim().match(/^\d{4}-\d{2}-\d{2}$/) ? dueDate.trim() : null;
+
+      const tache = await createTache(db, {
         titre: titre.trim(),
-        contenu: contenu.trim(),
+        description: description.trim() || undefined,
         statut,
         projet_id: selectedProjetId,
         auteur_id: localUser.id,
         team_id: localTeam.id,
+        due_date: parsedDate,
       });
 
-      pushNote(db, note.id, team.id); // fire and forget
+      pushTache(db, tache.id, team.id); // fire and forget
       router.back();
     } finally {
       setIsSaving(false);
     }
-  }, [titre, contenu, selectedProjetId, statut, user, team, db]);
+  }, [titre, description, selectedProjetId, statut, dueDate, user, team, db]);
 
   const canSave = titre.trim().length > 0 && selectedProjetId !== null;
 
@@ -82,7 +93,7 @@ export default function CreateNoteScreen() {
         <Pressable onPress={() => router.back()} style={styles.headerBtn}>
           <Ionicons name="close" size={22} color={Colors.textPrimary} />
         </Pressable>
-        <Text style={styles.headerTitle}>Nouvelle note</Text>
+        <Text style={styles.headerTitle}>Nouvelle tâche</Text>
         <Pressable
           onPress={handleSave}
           disabled={!canSave || isSaving}
@@ -95,31 +106,34 @@ export default function CreateNoteScreen() {
         </Pressable>
       </View>
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView style={styles.body} keyboardShouldPersistTaps="handled">
 
-          {/* Projet + Statut row */}
-          <View style={styles.metaRow}>
-            <Pressable onPress={() => setShowProjetPicker(true)} style={styles.projetSelector}>
-              <View style={[styles.projetDot, { backgroundColor: selectedProjet?.couleur ?? Colors.border }]} />
-              <Text style={[styles.projetSelectorText, !selectedProjet && { color: Colors.textDisabled }]}>
-                {selectedProjet ? selectedProjet.titre : 'Projet…'}
-              </Text>
-              <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
-            </Pressable>
+          {/* Projet selector */}
+          <Pressable onPress={() => setShowProjetPicker(true)} style={styles.projetSelector}>
+            <View style={[styles.projetDot, { backgroundColor: selectedProjet?.couleur ?? Colors.border }]} />
+            <Text style={[styles.projetSelectorText, !selectedProjet && { color: Colors.textDisabled }]}>
+              {selectedProjet ? selectedProjet.titre : 'Sélectionner un projet'}
+            </Text>
+            <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+          </Pressable>
 
+          {/* Statut */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Statut</Text>
             <View style={styles.statutRow}>
-              {(['brouillon', 'publie'] as const).map((s) => (
+              {STATUTS.map((s) => (
                 <Pressable
-                  key={s}
-                  onPress={() => setStatut(s)}
-                  style={[styles.statutChip, statut === s && styles.statutChipActive]}
+                  key={s.key}
+                  onPress={() => setStatut(s.key)}
+                  style={[
+                    styles.statutChip,
+                    statut === s.key && { backgroundColor: s.color + '20', borderColor: s.color },
+                  ]}
                 >
-                  <Text style={[styles.statutChipText, statut === s && styles.statutChipTextActive]}>
-                    {s === 'brouillon' ? 'Brouillon' : 'Publié'}
+                  <View style={[styles.statutDot, { backgroundColor: s.color }]} />
+                  <Text style={[styles.statutChipText, statut === s.key && { color: s.color }]}>
+                    {s.label}
                   </Text>
                 </Pressable>
               ))}
@@ -129,7 +143,7 @@ export default function CreateNoteScreen() {
           {/* Titre */}
           <TextInput
             style={styles.titleInput}
-            placeholder="Titre de la note"
+            placeholder="Titre de la tâche"
             placeholderTextColor={Colors.textDisabled}
             value={titre}
             onChangeText={setTitre}
@@ -139,16 +153,33 @@ export default function CreateNoteScreen() {
 
           <View style={styles.divider} />
 
-          {/* Contenu */}
+          {/* Description */}
           <TextInput
-            style={styles.contentInput}
-            placeholder="Commencez à écrire…"
+            style={styles.descInput}
+            placeholder="Description (optionnel)…"
             placeholderTextColor={Colors.textDisabled}
-            value={contenu}
-            onChangeText={setContenu}
+            value={description}
+            onChangeText={setDescription}
             multiline
             textAlignVertical="top"
           />
+
+          {/* Date d'échéance */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Date d'échéance</Text>
+            <View style={styles.dateInputRow}>
+              <Ionicons name="calendar-outline" size={16} color={Colors.textSecondary} />
+              <TextInput
+                style={styles.dateInput}
+                placeholder="AAAA-MM-JJ (ex: 2026-03-15)"
+                placeholderTextColor={Colors.textDisabled}
+                value={dueDate}
+                onChangeText={setDueDate}
+                keyboardType="numeric"
+                maxLength={10}
+              />
+            </View>
+          </View>
 
         </ScrollView>
       </KeyboardAvoidingView>
@@ -184,7 +215,6 @@ export default function CreateNoteScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
 
-  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -195,18 +225,8 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
     backgroundColor: Colors.surface,
   },
-  headerBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.textPrimary,
-  },
+  headerBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: 16, fontWeight: '600', color: Colors.textPrimary },
   saveBtn: {
     paddingHorizontal: 16,
     height: 34,
@@ -219,80 +239,75 @@ const styles = StyleSheet.create({
   saveBtnDisabled: { opacity: 0.4 },
   saveBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
 
-  // Body
   body: { flex: 1, paddingHorizontal: Layout.screenPaddingH },
 
-  // Meta row
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingTop: 16,
-    paddingBottom: 8,
-    flexWrap: 'wrap',
-  },
   projetSelector: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
     backgroundColor: Colors.surfaceAlt,
     borderWidth: 1,
     borderColor: Colors.border,
+    marginTop: 16,
+    marginBottom: 8,
   },
-  projetDot: { width: 8, height: 8, borderRadius: 4 },
-  projetSelectorText: { fontSize: 13, fontWeight: '500', color: Colors.textPrimary },
+  projetDot: { width: 10, height: 10, borderRadius: 5 },
+  projetSelectorText: { flex: 1, fontSize: 14, fontWeight: '500', color: Colors.textPrimary },
 
-  statutRow: { flexDirection: 'row', gap: 6 },
+  section: { marginTop: 16, marginBottom: 4 },
+  sectionLabel: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
+  statutRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   statutChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 20,
     backgroundColor: Colors.surfaceAlt,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  statutChipActive: {
-    backgroundColor: Colors.primary + '18',
-    borderColor: Colors.primary,
-  },
-  statutChipText: { fontSize: 12, fontWeight: '500', color: Colors.textSecondary },
-  statutChipTextActive: { color: Colors.primary },
+  statutDot: { width: 7, height: 7, borderRadius: 3.5 },
+  statutChipText: { fontSize: 13, fontWeight: '500', color: Colors.textSecondary },
 
-  // Inputs
   titleInput: {
     fontSize: 22,
     fontWeight: '700',
     color: Colors.textPrimary,
-    paddingTop: 8,
+    paddingTop: 16,
     paddingBottom: 12,
     lineHeight: 30,
   },
-  divider: {
-    height: 1,
-    backgroundColor: Colors.border,
-    marginBottom: 12,
-  },
-  contentInput: {
-    fontSize: 16,
+  divider: { height: 1, backgroundColor: Colors.border, marginBottom: 12 },
+  descInput: {
+    fontSize: 15,
     color: Colors.textPrimary,
-    lineHeight: 24,
-    minHeight: 300,
-    paddingBottom: 100,
+    lineHeight: 22,
+    minHeight: 120,
+    paddingBottom: 16,
   },
 
-  // Modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: Colors.overlay,
+  dateInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: Colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
+  dateInput: { flex: 1, fontSize: 14, color: Colors.textPrimary },
+
+  modalOverlay: { flex: 1, backgroundColor: Colors.overlay },
   modalSheet: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    bottom: 0, left: 0, right: 0,
     backgroundColor: Colors.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
@@ -300,20 +315,14 @@ const styles = StyleSheet.create({
     maxHeight: '60%',
   },
   modalHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
+    width: 36, height: 4, borderRadius: 2,
     backgroundColor: Colors.border,
     alignSelf: 'center',
-    marginTop: 12,
-    marginBottom: 8,
+    marginTop: 12, marginBottom: 8,
   },
   modalTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.textPrimary,
-    paddingHorizontal: Layout.screenPaddingH,
-    paddingBottom: 12,
+    fontSize: 16, fontWeight: '600', color: Colors.textPrimary,
+    paddingHorizontal: Layout.screenPaddingH, paddingBottom: 12,
   },
   projetOption: {
     flexDirection: 'row',

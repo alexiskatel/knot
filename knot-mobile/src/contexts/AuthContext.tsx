@@ -22,6 +22,7 @@ interface AuthContextValue {
   isLoading: boolean;
   signIn: (apiKey: string, user: AuthUser, team: AuthTeam) => Promise<void>;
   signOut: () => Promise<void>;
+  refreshFromDb: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -106,6 +107,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setTeam(authTeam);
   }
 
+  async function refreshFromDb() {
+    try {
+      const storedUser = Storage.getItemSync('user');
+      const storedTeam = Storage.getItemSync('team');
+      if (!storedUser || !storedTeam) return;
+
+      const currentUser: AuthUser = JSON.parse(storedUser);
+      const currentTeam: AuthTeam = JSON.parse(storedTeam);
+
+      const teamRow = await db.getFirstAsync<{ nom: string; couleur_primaire: string }>(
+        'SELECT nom, couleur_primaire FROM teams WHERE server_id = ?',
+        currentTeam.id,
+      );
+      if (teamRow) {
+        const freshTeam: AuthTeam = { ...currentTeam, nom: teamRow.nom, couleur_primaire: teamRow.couleur_primaire };
+        Storage.setItemSync('team', JSON.stringify(freshTeam));
+        setTeam(freshTeam);
+      }
+
+      const userRow = await db.getFirstAsync<{ nom: string; prenom: string; email: string }>(
+        'SELECT nom, prenom, email FROM users WHERE server_id = ?',
+        currentUser.id,
+      );
+      if (userRow) {
+        const freshUser: AuthUser = { ...currentUser, nom: userRow.nom, prenom: userRow.prenom, email: userRow.email };
+        Storage.setItemSync('user', JSON.stringify(freshUser));
+        setUser(freshUser);
+      }
+    } catch (e) {
+      console.warn('[Auth] refreshFromDb échoué:', e);
+    }
+  }
+
   async function signOut() {
     Storage.removeItemSync('api_key');
     Storage.removeItemSync('team_id');
@@ -116,7 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, team, isLoading, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, team, isLoading, signIn, signOut, refreshFromDb }}>
       {children}
     </AuthContext.Provider>
   );

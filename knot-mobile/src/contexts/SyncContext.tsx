@@ -18,7 +18,7 @@ const SyncContext = createContext<SyncContextValue | null>(null);
 
 export function SyncProvider({ children }: { children: ReactNode }) {
   const db = useSQLiteContext();
-  const { user, team } = useAuth();
+  const { user, team, refreshFromDb } = useAuth();
   const pathname = usePathname();
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
@@ -37,6 +37,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       );
       if (!teamRow) return;
       await syncAll(db, teamRow.id, team.id);
+      await refreshFromDb();
       const now = new Date();
       setLastSyncAt(now);
       lastSyncAtRef.current = Date.now();

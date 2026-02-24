@@ -10,7 +10,7 @@ use Illuminate\Support\Str;
 
 class TacheController extends BaseApiController
 {
-    protected array $defaultIncludes = ['projet', 'auteur', 'assigne'];
+    protected array $defaultIncludes = [];
     protected array $allowedFilters = ['statut', 'projet_id', 'auteur_id', 'assigne_id', 'team_id'];
     protected array $allowedSorts = ['id', 'titre', 'statut', 'due_date', 'created_at'];
     protected array $searchableFields = ['titre', 'description'];
