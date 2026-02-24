@@ -199,13 +199,13 @@ export default function AuthScreen() {
           </Animated.View>
 
           {/* Dev bypass */}
-          {isDev && (
+          {/* {isDev && (
             <Animated.View entering={FadeIn.delay(500)} style={styles.devArea}>
               <Pressable onPress={handleDemoAccess} style={styles.devBtn}>
                 <Text style={styles.devLabel}>⚡ Accès démo (dev)</Text>
               </Pressable>
             </Animated.View>
-          )}
+          )} */}
 
           {/* Step indicator */}
           <Animated.View entering={FadeIn.delay(400)} style={styles.stepIndicator}>
