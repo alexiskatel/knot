@@ -1,6 +1,7 @@
 import Storage from 'expo-sqlite/kv-store';
 
-const API_BASE_URL = 'http://192.168.1.77:8000/api/v1';
+// const API_BASE_URL = 'http://192.168.1.77:8000/api/v1';
+const API_BASE_URL = 'https://vps-413994e6.vps.ovh.net:8020/api/v1';
 // const API_BASE_URL = 'http://10.46.89.19:8000/api/v1';
 // const API_BASE_URL = 'http://localhost:8000/api/v1';
 
