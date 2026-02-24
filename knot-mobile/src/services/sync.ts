@@ -416,3 +416,52 @@ export async function pushTache(
     // Offline → reste en pending
   }
 }
+
+export async function pushCommentaire(
+  db: SQLiteDatabase,
+  commentaireLocalId: number,
+): Promise<void> {
+  const commentaire = await db.getFirstAsync<any>(
+    `SELECT c.*,
+            u.server_id as auteur_server_id,
+            n.server_id as note_server_id,
+            t.server_id as tache_server_id
+     FROM commentaires c
+     LEFT JOIN users u ON c.auteur_id = u.id
+     LEFT JOIN notes n ON c.note_id = n.id
+     LEFT JOIN taches t ON c.tache_id = t.id
+     WHERE c.id = ?`,
+    commentaireLocalId,
+  );
+  if (!commentaire) return;
+
+  // Déterminer la route selon note ou tâche
+  let route: string | null = null;
+  if (commentaire.note_id !== null && commentaire.note_server_id) {
+    route = `/notes/${commentaire.note_server_id}/commentaires`;
+  } else if (commentaire.tache_id !== null && commentaire.tache_server_id) {
+    route = `/taches/${commentaire.tache_server_id}/commentaires`;
+  }
+
+  if (!route || !commentaire.auteur_server_id) {
+    console.warn('[Push] Commentaire', commentaireLocalId, '- route ou auteur manquant, push ignoré');
+    return;
+  }
+
+  try {
+    const res = await api.post<any>(route, {
+      contenu: commentaire.contenu,
+      auteur_id: commentaire.auteur_server_id,
+      sync_id: commentaire.sync_id,
+    });
+    const created = res.list;
+    if (created?.id) {
+      await db.runAsync(
+        `UPDATE commentaires SET server_id = ?, sync_status = 'synced' WHERE id = ?`,
+        created.id, commentaireLocalId,
+      );
+    }
+  } catch (e) {
+    console.warn('[Push] Commentaire', commentaireLocalId, 'échoué:', e);
+  }
+}

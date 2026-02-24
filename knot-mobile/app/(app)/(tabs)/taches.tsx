@@ -333,7 +333,7 @@ export default function TachesScreen() {
             <Text style={[styles.membreDropdownText, selectedMembreId !== null && styles.membreDropdownTextActive]}>
               {selectedMembreId !== null
                 ? membreLabel(membres.find((m) => m.id === selectedMembreId)!)
-                : 'Tous les membres'}
+                : 'Assigné à : '}
             </Text>
             <Ionicons name="chevron-down" size={13} color={selectedMembreId !== null ? Colors.primary : Colors.textSecondary} />
           </Pressable>
@@ -352,7 +352,7 @@ export default function TachesScreen() {
           <View style={styles.modalHandle} />
           <Text style={styles.modalTitle}>Filtrer par membre</Text>
           <FlatList
-            data={[{ id: -1, nom: 'Tous les membres', prenom: null } as Membre, ...membres]}
+            data={[{ id: -1, nom: 'Assigné à : ', prenom: null } as Membre, ...membres]}
             keyExtractor={(m) => String(m.id)}
             renderItem={({ item }) => {
               const isAll = item.id === -1;
@@ -371,7 +371,7 @@ export default function TachesScreen() {
                     color={isSelected ? Colors.primary : Colors.textSecondary}
                   />
                   <Text style={[styles.modalOptionText, isSelected && { color: Colors.primary, fontWeight: '600' }]}>
-                    {isAll ? 'Tous les membres' : membreLabel(item)}
+                    {isAll ? 'Assigné à : ' : membreLabel(item)}
                   </Text>
                   {isSelected && <Ionicons name="checkmark" size={18} color={Colors.primary} />}
                 </Pressable>

@@ -1,6 +1,6 @@
 import { type SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
   const result = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
@@ -115,4 +115,35 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
       PRAGMA user_version = 1;
     `);
   });
+
+  if (currentVersion < 2) {
+    await db.withTransactionAsync(async () => {
+      await db.execAsync(`
+        CREATE TABLE commentaires_new (
+          id        INTEGER PRIMARY KEY NOT NULL,
+          server_id INTEGER,
+          sync_id   TEXT    NOT NULL UNIQUE,
+          contenu   TEXT    NOT NULL,
+          type      TEXT    NOT NULL DEFAULT 'texte',
+          note_id   INTEGER REFERENCES notes(id)  ON DELETE CASCADE,
+          tache_id  INTEGER REFERENCES taches(id) ON DELETE CASCADE,
+          auteur_id INTEGER NOT NULL REFERENCES users(id),
+          team_id   INTEGER NOT NULL REFERENCES teams(id),
+          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          sync_status TEXT NOT NULL DEFAULT 'synced'
+        );
+        INSERT INTO commentaires_new
+          SELECT id, server_id, sync_id, contenu, type,
+                 note_id, NULL, auteur_id, team_id,
+                 created_at, updated_at, sync_status
+          FROM commentaires;
+        DROP TABLE commentaires;
+        ALTER TABLE commentaires_new RENAME TO commentaires;
+        CREATE INDEX IF NOT EXISTS idx_commentaires_note  ON commentaires(note_id);
+        CREATE INDEX IF NOT EXISTS idx_commentaires_tache ON commentaires(tache_id);
+        PRAGMA user_version = 2;
+      `);
+    });
+  }
 }

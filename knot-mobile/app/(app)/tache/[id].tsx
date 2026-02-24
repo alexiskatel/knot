@@ -1,31 +1,38 @@
-import { useState, useCallback, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  ScrollView,
-  Pressable,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  Modal,
-  FlatList,
-  ActivityIndicator,
-  Alert,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { Ionicons } from '@expo/vector-icons';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useAuth } from '@/src/contexts/AuthContext';
-import { useProjets } from '@/src/hooks/useProjets';
-import { getTacheById, updateTache, deleteTache, type Tache } from '@/src/db/taches';
-import { pushTache } from '@/src/services/sync';
 import { api } from '@/src/api/client';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
+import { useAuth } from '@/src/contexts/AuthContext';
+import {
+  createCommentaire,
+  deleteCommentaire,
+  getCommentairesByTache,
+  upsertCommentaireFromServer,
+  type Commentaire,
+} from '@/src/db/commentaires';
+import { deleteTache, getTacheById, updateTache, type Tache } from '@/src/db/taches';
+import { useProjets } from '@/src/hooks/useProjets';
+import { pushCommentaire, pushTache } from '@/src/services/sync';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -45,6 +52,13 @@ function formatDate(iso: string) {
   });
 }
 
+function formatShortDate(iso: string) {
+  return new Date(iso).toLocaleDateString('fr-FR', {
+    day: 'numeric', month: 'short',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
 interface Membre { id: number; nom: string; prenom: string | null; }
 function membreLabel(m: Membre) { return m.prenom ? `${m.prenom} ${m.nom}` : m.nom; }
 
@@ -54,7 +68,7 @@ export default function TacheDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const db = useSQLiteContext();
-  const { team } = useAuth();
+  const { team, user } = useAuth();
   const { projets } = useProjets();
 
   const [tache, setTache] = useState<Tache | null>(null);
@@ -76,6 +90,13 @@ export default function TacheDetailScreen() {
   const [pickerStep, setPickerStep] = useState<'date' | 'time'>('date');
   const [tempDate, setTempDate] = useState<Date>(new Date());
   const [isSaving, setIsSaving] = useState(false);
+
+  // Comments state
+  const [commentaires, setCommentaires] = useState<Commentaire[]>([]);
+  const [commentInput, setCommentInput] = useState('');
+  const [isSendingComment, setIsSendingComment] = useState(false);
+  const [isLoadingComments, setIsLoadingComments] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -114,6 +135,54 @@ export default function TacheDetailScreen() {
     }
     loadMembres();
   }, [db, team]);
+
+  const loadCommentaires = useCallback(async (currentTache: Tache) => {
+    if (!team) return;
+    setIsLoadingComments(true);
+    try {
+      if (currentTache.server_id) {
+        const res = await api.get<any>(`/taches/${currentTache.server_id}/commentaires`);
+        const list: any[] = Array.isArray(res?.list) ? res.list
+          : Array.isArray(res?.list?.data) ? res.list.data
+          : [];
+
+        const teamRow = await db.getFirstAsync<{ id: number }>(
+          'SELECT id FROM teams WHERE server_id = ?', team.id,
+        );
+        if (teamRow) {
+          for (const c of list) {
+            const auteurRow = await db.getFirstAsync<{ id: number }>(
+              'SELECT id FROM users WHERE server_id = ?', c.auteur_id ?? c.auteur?.id,
+            );
+            await upsertCommentaireFromServer(
+              db, c,
+              auteurRow?.id ?? currentTache.auteur_id,
+              teamRow.id,
+              undefined,
+              currentTache.id,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Commentaires] Fetch tache commentaires échoué:', e);
+    } finally {
+      setIsLoadingComments(false);
+    }
+    const rows = await getCommentairesByTache(db, Number(id));
+    setCommentaires(rows);
+  }, [db, team, id]);
+
+  useEffect(() => {
+    if (tache && !editMode) {
+      loadCommentaires(tache);
+    }
+  }, [tache, editMode]);
+
+  const reloadCommentairesLocal = useCallback(async () => {
+    const rows = await getCommentairesByTache(db, Number(id));
+    setCommentaires(rows);
+  }, [db, id]);
 
   const selectedProjet = projets.find((p) => p.id === selectedProjetId);
   const selectedAssigne = membres.find((m) => m.id === assigneId);
@@ -205,6 +274,56 @@ export default function TacheDetailScreen() {
     }
     setEditMode(false);
   }, [tache]);
+
+  const handleSendComment = useCallback(async () => {
+    const text = commentInput.trim();
+    if (!text || !tache || !team || !user || isSendingComment) return;
+    setIsSendingComment(true);
+    try {
+      const auteurRow = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM users WHERE server_id = ?', user.id,
+      );
+      const teamRow = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM teams WHERE server_id = ?', team.id,
+      );
+      if (!auteurRow || !teamRow) return;
+
+      const newComment = await createCommentaire(db, {
+        contenu: text,
+        tache_id: tache.id,
+        auteur_id: auteurRow.id,
+        team_id: teamRow.id,
+      });
+      setCommentInput('');
+      await reloadCommentairesLocal();
+      pushCommentaire(db, newComment.id);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    } finally {
+      setIsSendingComment(false);
+    }
+  }, [commentInput, tache, team, user, db, isSendingComment, reloadCommentairesLocal]);
+
+  const handleDeleteComment = useCallback((c: Commentaire) => {
+    Alert.alert(
+      'Supprimer le commentaire',
+      'Cette action est irréversible.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer', style: 'destructive',
+          onPress: async () => {
+            if (c.server_id) {
+              api.delete(`/commentaires/${c.server_id}`).catch((e) => {
+                console.warn('[Delete] Commentaire', c.server_id, 'échoué:', e);
+              });
+            }
+            await deleteCommentaire(db, c.id);
+            await reloadCommentairesLocal();
+          },
+        },
+      ],
+    );
+  }, [db, reloadCommentairesLocal]);
 
   // ─── Loading / not found ──────────────────────────────────────────────────
 
@@ -465,93 +584,210 @@ export default function TacheDetailScreen() {
         </Pressable>
       </View>
 
-      <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
-        {/* Projet + badges */}
-        <View style={styles.noteMeta}>
-          {tache.projet_titre && (
-            <View style={[styles.projetTag, { backgroundColor: (tache.projet_couleur ?? Colors.primary) + '18' }]}>
-              <View style={[styles.projetDot, { backgroundColor: tache.projet_couleur ?? Colors.primary }]} />
-              <Text style={[styles.projetTagText, { color: tache.projet_couleur ?? Colors.primary }]}>
-                {tache.projet_titre}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        <ScrollView
+          ref={scrollRef}
+          style={styles.body}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Projet + badges */}
+          <View style={styles.noteMeta}>
+            {tache.projet_titre && (
+              <View style={[styles.projetTag, { backgroundColor: (tache.projet_couleur ?? Colors.primary) + '18' }]}>
+                <View style={[styles.projetDot, { backgroundColor: tache.projet_couleur ?? Colors.primary }]} />
+                <Text style={[styles.projetTagText, { color: tache.projet_couleur ?? Colors.primary }]}>
+                  {tache.projet_titre}
+                </Text>
+              </View>
+            )}
+            {isPending && (
+              <View style={styles.pendingBadge}>
+                <Ionicons name="cloud-upload-outline" size={12} color={Colors.textDisabled} />
+                <Text style={styles.pendingText}>Non synchronisé</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Titre */}
+          <Text style={styles.noteTitle}>{tache.titre}</Text>
+
+          {/* Statut rapide */}
+          <Text style={styles.sectionLabel}>Statut</Text>
+          <View style={styles.chipRow}>
+            {STATUTS.map((s) => (
+              <Pressable
+                key={s.key}
+                onPress={() => handleStatusChange(s.key)}
+                style={[styles.chip, tache.statut === s.key && { backgroundColor: s.color + '20', borderColor: s.color }]}
+              >
+                <View style={[styles.chipDot, { backgroundColor: s.color }]} />
+                <Text style={[styles.chipText, tache.statut === s.key && { color: s.color }]}>{s.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={[styles.divider, { marginTop: 16 }]} />
+
+          {/* Infos */}
+          <View style={styles.infoRow}>
+            <Ionicons name="person-outline" size={15} color={Colors.textSecondary} />
+            <Text style={styles.infoLabel}>Auteur</Text>
+            <Text style={styles.infoValue}>
+              {tache.auteur_prenom ? `${tache.auteur_prenom} ${tache.auteur_nom}` : tache.auteur_nom ?? '—'}
+            </Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Ionicons name="person-circle-outline" size={15} color={Colors.textSecondary} />
+            <Text style={styles.infoLabel}>Assigné à</Text>
+            <Text style={styles.infoValue}>{assigneLabel ?? '—'}</Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Ionicons
+              name="calendar-outline"
+              size={15}
+              color={isOverdue ? Colors.error : Colors.textSecondary}
+            />
+            <Text style={styles.infoLabel}>Échéance</Text>
+            <Text style={[styles.infoValue, isOverdue && { color: Colors.error }]}>
+              {tache.due_date
+                ? `${formatDate(tache.due_date)}${isOverdue ? '  (En retard)' : ''}`
+                : '—'}
+            </Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Ionicons name="time-outline" size={15} color={Colors.textSecondary} />
+            <Text style={styles.infoLabel}>Modifié</Text>
+            <Text style={styles.infoValue}>{formatDate(tache.updated_at)}</Text>
+          </View>
+
+          {/* Description */}
+          {tache.description ? (
+            <>
+              <View style={styles.divider} />
+              <Text style={styles.descText} selectable>{tache.description}</Text>
+            </>
+          ) : null}
+
+          {/* ── Commentaires ──────────────────────────────────────────────── */}
+          <View style={styles.commentSection}>
+            <View style={styles.commentSectionHeader}>
+              <Ionicons name="chatbubble-outline" size={14} color={Colors.textSecondary} />
+              <Text style={styles.commentSectionTitle}>
+                Commentaires {commentaires.length > 0 ? `(${commentaires.length})` : ''}
               </Text>
+              {isLoadingComments && <ActivityIndicator size="small" color={Colors.textDisabled} />}
             </View>
-          )}
-          {isPending && (
-            <View style={styles.pendingBadge}>
-              <Ionicons name="cloud-upload-outline" size={12} color={Colors.textDisabled} />
-              <Text style={styles.pendingText}>Non synchronisé</Text>
-            </View>
-          )}
-        </View>
 
-        {/* Titre */}
-        <Text style={styles.noteTitle}>{tache.titre}</Text>
+            {commentaires.length === 0 && !isLoadingComments && (
+              <Text style={styles.noComments}>Aucun commentaire.</Text>
+            )}
 
-        {/* Statut rapide */}
-        <Text style={styles.sectionLabel}>Statut</Text>
-        <View style={styles.chipRow}>
-          {STATUTS.map((s) => (
-            <Pressable
-              key={s.key}
-              onPress={() => handleStatusChange(s.key)}
-              style={[styles.chip, tache.statut === s.key && { backgroundColor: s.color + '20', borderColor: s.color }]}
-            >
-              <View style={[styles.chipDot, { backgroundColor: s.color }]} />
-              <Text style={[styles.chipText, tache.statut === s.key && { color: s.color }]}>{s.label}</Text>
-            </Pressable>
-          ))}
-        </View>
+            {commentaires.map((c) => {
+              const auteurLabel = c.auteur_prenom
+                ? `${c.auteur_prenom} ${c.auteur_nom}`
+                : c.auteur_nom ?? 'Inconnu';
+              return (
+                <CommentItem
+                  key={c.id}
+                  commentaire={c}
+                  auteurLabel={auteurLabel}
+                  currentUserId={user?.id ?? null}
+                  db={db}
+                  onDelete={() => handleDeleteComment(c)}
+                />
+              );
+            })}
 
-        <View style={[styles.divider, { marginTop: 16 }]} />
+            <View style={{ height: 16 }} />
+          </View>
+        </ScrollView>
 
-        {/* Infos */}
-        <View style={styles.infoRow}>
-          <Ionicons name="person-outline" size={15} color={Colors.textSecondary} />
-          <Text style={styles.infoLabel}>Auteur</Text>
-          <Text style={styles.infoValue}>
-            {tache.auteur_prenom ? `${tache.auteur_prenom} ${tache.auteur_nom}` : tache.auteur_nom ?? '—'}
-          </Text>
-        </View>
-
-        <View style={styles.infoRow}>
-          <Ionicons name="person-circle-outline" size={15} color={Colors.textSecondary} />
-          <Text style={styles.infoLabel}>Assigné à</Text>
-          <Text style={styles.infoValue}>{assigneLabel ?? '—'}</Text>
-        </View>
-
-        <View style={styles.infoRow}>
-          <Ionicons
-            name="calendar-outline"
-            size={15}
-            color={isOverdue ? Colors.error : Colors.textSecondary}
+        {/* Barre de saisie fixe */}
+        <View style={styles.commentInputBar}>
+          <TextInput
+            style={styles.commentTextInput}
+            placeholder="Ajouter un commentaire…"
+            placeholderTextColor={Colors.textDisabled}
+            value={commentInput}
+            onChangeText={setCommentInput}
+            multiline
+            maxLength={1000}
           />
-          <Text style={styles.infoLabel}>Échéance</Text>
-          <Text style={[styles.infoValue, isOverdue && { color: Colors.error }]}>
-            {tache.due_date
-              ? `${formatDate(tache.due_date)}${isOverdue ? '  (En retard)' : ''}`
-              : '—'}
-          </Text>
+          <Pressable
+            onPress={handleSendComment}
+            disabled={!commentInput.trim() || isSendingComment}
+            style={[styles.sendBtn, (!commentInput.trim() || isSendingComment) && styles.sendBtnDisabled]}
+          >
+            {isSendingComment
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Ionicons name="send" size={16} color="#fff" />
+            }
+          </Pressable>
         </View>
-
-        <View style={styles.infoRow}>
-          <Ionicons name="time-outline" size={15} color={Colors.textSecondary} />
-          <Text style={styles.infoLabel}>Modifié</Text>
-          <Text style={styles.infoValue}>{formatDate(tache.updated_at)}</Text>
-        </View>
-
-        {/* Description */}
-        {tache.description ? (
-          <>
-            <View style={styles.divider} />
-            <Text style={styles.descText} selectable>{tache.description}</Text>
-          </>
-        ) : null}
-
-        <View style={{ height: 60 }} />
-      </ScrollView>
+      </KeyboardAvoidingView>
 
       {pickerModals}
     </SafeAreaView>
+  );
+}
+
+// ─── CommentItem ─────────────────────────────────────────────────────────────
+
+function CommentItem({
+  commentaire,
+  auteurLabel,
+  currentUserId,
+  db,
+  onDelete,
+}: {
+  commentaire: Commentaire;
+  auteurLabel: string;
+  currentUserId: number | null;
+  db: any;
+  onDelete: () => void;
+}) {
+  const [isOwn, setIsOwn] = useState(false);
+
+  useEffect(() => {
+    async function check() {
+      if (!currentUserId) return;
+      const row = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM users WHERE server_id = ?', currentUserId,
+      );
+      setIsOwn(row ? row.id === commentaire.auteur_id : false);
+    }
+    check();
+  }, [currentUserId, commentaire.auteur_id, db]);
+
+  return (
+    <View style={commentStyles.item}>
+      <View style={commentStyles.avatar}>
+        <Text style={commentStyles.avatarText}>{auteurLabel.charAt(0).toUpperCase()}</Text>
+      </View>
+      <View style={commentStyles.bubble}>
+        <View style={commentStyles.bubbleHeader}>
+          <Text style={commentStyles.auteur}>{auteurLabel}</Text>
+          <Text style={commentStyles.date}>{formatShortDate(commentaire.created_at)}</Text>
+          {commentaire.sync_status === 'pending' && (
+            <Ionicons name="cloud-upload-outline" size={11} color={Colors.textDisabled} />
+          )}
+        </View>
+        <Text style={commentStyles.contenu}>{commentaire.contenu}</Text>
+      </View>
+      {isOwn && (
+        <Pressable onPress={onDelete} hitSlop={8} style={commentStyles.deleteBtn}>
+          <Ionicons name="trash-outline" size={16} color={Colors.error} />
+        </Pressable>
+      )}
+    </View>
   );
 }
 
@@ -681,4 +917,50 @@ const styles = StyleSheet.create({
   pickerOptionSelected: { backgroundColor: Colors.surfaceAlt },
   pickerOptionDot: { width: 12, height: 12, borderRadius: 6 },
   pickerOptionText: { flex: 1, fontSize: 15, color: Colors.textPrimary },
+
+  // Comments
+  commentSection: { marginTop: 24 },
+  commentSectionHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12,
+  },
+  commentSectionTitle: {
+    fontSize: 11, fontWeight: '600', color: Colors.textSecondary,
+    textTransform: 'uppercase', letterSpacing: 0.5, flex: 1,
+  },
+  noComments: { fontSize: 14, color: Colors.textDisabled, fontStyle: 'italic', paddingVertical: 8 },
+  commentInputBar: {
+    flexDirection: 'row', alignItems: 'flex-end', gap: 8,
+    paddingHorizontal: Layout.screenPaddingH, paddingVertical: 10,
+    borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.surface,
+    marginBottom: 40,
+
+  },
+  commentTextInput: {
+    flex: 1, fontSize: 14, color: Colors.textPrimary,
+    backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border,
+    borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, maxHeight: 100,
+  },
+  sendBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
+  },
+  sendBtnDisabled: { opacity: 0.4 },
+});
+
+const commentStyles = StyleSheet.create({
+  item: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 12 },
+  avatar: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: Colors.primary + '20', alignItems: 'center', justifyContent: 'center',
+  },
+  avatarText: { fontSize: 13, fontWeight: '700', color: Colors.primary },
+  bubble: {
+    flex: 1, backgroundColor: Colors.surfaceAlt, borderRadius: 12,
+    padding: 10, borderWidth: 1, borderColor: Colors.borderLight,
+  },
+  bubbleHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  auteur: { fontSize: 12, fontWeight: '600', color: Colors.textPrimary },
+  date: { fontSize: 11, color: Colors.textDisabled, flex: 1 },
+  contenu: { fontSize: 14, color: Colors.textPrimary, lineHeight: 20 },
+  deleteBtn: { paddingTop: 8 },
 });
