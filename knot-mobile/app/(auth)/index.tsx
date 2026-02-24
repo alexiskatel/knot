@@ -122,7 +122,7 @@ export default function AuthScreen() {
 
             {step === 'team' && (
               <View key="step-team">
-                <Text style={styles.stepTitle}>Rejoindre votre team</Text>
+                <Text style={styles.stepTitle}>Rejoindre votre team.</Text>
                 <Text style={styles.stepSubtitle}>
                   Saisissez le code de votre espace de travail.
                 </Text>
