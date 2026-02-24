@@ -151,13 +151,15 @@ export default function SettingsScreen() {
           <View style={styles.avatar}>
             <Text style={styles.avatarInitial}>
               {user?.prenom?.[0] ?? user?.nom?.[0] ?? '?'}
+              
             </Text>
           </View>
           <View>
             <Text style={styles.identityName}>
               {user?.prenom ? `${user.prenom} ${user.nom}` : user?.nom ?? '—'}
             </Text>
-            {user?.email ? <Text style={styles.identityEmail}>{user.email}</Text> : null}
+            {user?.email ? <Text style={styles.identityEmail}>{user.email} n{user?.is_admin}n</Text> : null}
+            
           </View>
         </View>
 

@@ -8,6 +8,7 @@ import {
   Pressable,
   RefreshControl,
   ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -164,7 +165,7 @@ function EmptyNotes({ hasFilter }: { hasFilter: boolean }) {
         <Ionicons name="document-text-outline" size={36} color={Colors.textDisabled} />
       </View>
       <Text style={styles.emptyTitle}>
-        {hasFilter ? 'Aucune note dans ce projet' : 'Aucune note pour l\'instant'}
+        {hasFilter ? 'Aucune note trouvée' : 'Aucune note pour l\'instant'}
       </Text>
       <Text style={styles.emptySubtitle}>
         Appuyez sur + pour créer votre première note.
@@ -183,6 +184,7 @@ export default function HomeScreen() {
   const [selectedProjet, setSelectedProjet] = useState<Projet | null>(null);
   const { notes, isLoading: notesLoading, refresh: refreshNotes } = useNotes(selectedProjet?.id);
   const [refreshing, setRefreshing] = useState(false);
+  const [search, setSearch] = useState('');
 
   // Sélectionne le projet passé en paramètre dès que la liste est chargée
   useEffect(() => {
@@ -199,6 +201,13 @@ export default function HomeScreen() {
   }, [sync, refreshProjets, refreshNotes]);
 
   const isLoading = projetsLoading || notesLoading;
+
+  const filteredNotes = search.trim()
+    ? notes.filter((n) => {
+        const q = search.toLowerCase();
+        return n.titre.toLowerCase().includes(q) || n.contenu.toLowerCase().includes(q);
+      })
+    : notes;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -231,6 +240,25 @@ export default function HomeScreen() {
         </Animated.View>
       )}
 
+      {/* Search bar */}
+      <View style={styles.searchRow}>
+        <Ionicons name="search-outline" size={16} color={Colors.textSecondary} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Rechercher par titre ou contenu…"
+          placeholderTextColor={Colors.textDisabled}
+          value={search}
+          onChangeText={setSearch}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
+        />
+        {search.length > 0 && (
+          <Pressable onPress={() => setSearch('')} hitSlop={8}>
+            <Ionicons name="close-circle" size={16} color={Colors.textDisabled} />
+          </Pressable>
+        )}
+      </View>
+
       {/* Notes list */}
       {isLoading ? (
         <View style={styles.loader}>
@@ -238,7 +266,7 @@ export default function HomeScreen() {
         </View>
       ) : (
         <FlatList
-          data={notes}
+          data={filteredNotes}
           keyExtractor={(item) => String(item.id)}
           renderItem={({ item }) => (
             <NoteCard
@@ -256,7 +284,7 @@ export default function HomeScreen() {
               tintColor={Colors.primary}
             />
           }
-          ListEmptyComponent={<EmptyNotes hasFilter={selectedProjet !== null} />}
+          ListEmptyComponent={<EmptyNotes hasFilter={selectedProjet !== null || search.length > 0} />}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
         />
       )}
@@ -349,6 +377,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     lineHeight: 15,
+  },
+
+  // Search
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: Layout.screenPaddingH,
+    marginBottom: 10,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.textPrimary,
   },
 
   // List

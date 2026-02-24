@@ -30,7 +30,7 @@ import {
   upsertCommentaireFromServer,
   type Commentaire,
 } from '@/src/db/commentaires';
-import { deleteTache, getTacheById, updateTache, type Tache } from '@/src/db/taches';
+import { softDeleteTache, getTacheById, updateTache, type Tache } from '@/src/db/taches';
 import { useProjets } from '@/src/hooks/useProjets';
 import { pushCommentaire, pushTache } from '@/src/services/sync';
 
@@ -255,7 +255,10 @@ export default function TacheDetailScreen() {
                 console.warn('[Delete] Tache', tache.server_id, 'échoué:', e);
               });
             }
-            await deleteTache(db, tache.id);
+            const localUser = user
+              ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', user.id)
+              : null;
+            await softDeleteTache(db, tache.id, localUser?.id ?? 0);
             router.back();
           },
         },

@@ -15,6 +15,8 @@ export interface Tache {
   due_date: string | null;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
+  deleted_by: number | null;
   sync_status: string;
   // Joined fields
   projet_titre?: string;
@@ -38,7 +40,7 @@ export async function getTachesByTeam(
        LEFT JOIN projets p ON p.id = t.projet_id
        LEFT JOIN users u ON u.id = t.auteur_id
        LEFT JOIN users a ON a.id = t.assigne_id
-       WHERE t.team_id = ? AND t.projet_id = ?
+       WHERE t.team_id = ? AND t.projet_id = ? AND t.deleted_at IS NULL
        ORDER BY t.due_date ASC, t.created_at DESC`
     : `SELECT t.*, p.titre as projet_titre, p.couleur as projet_couleur,
               u.nom as auteur_nom, u.prenom as auteur_prenom,
@@ -47,7 +49,7 @@ export async function getTachesByTeam(
        LEFT JOIN projets p ON p.id = t.projet_id
        LEFT JOIN users u ON u.id = t.auteur_id
        LEFT JOIN users a ON a.id = t.assigne_id
-       WHERE t.team_id = ?
+       WHERE t.team_id = ? AND t.deleted_at IS NULL
        ORDER BY t.statut ASC, t.due_date ASC, t.created_at DESC`;
 
   return db.getAllAsync<Tache>(sql, ...(projetId ? [teamId, projetId] : [teamId]));
@@ -149,6 +151,15 @@ export async function updateTache(
     `UPDATE taches SET ${clauses.join(', ')} WHERE id = ?`,
     ...params,
   );
+}
+
+export async function softDeleteTache(db: SQLiteDatabase, id: number, deletedBy: number): Promise<void> {
+  const now = new Date().toISOString();
+  await db.runAsync('UPDATE taches SET deleted_at = ?, deleted_by = ? WHERE id = ?', now, deletedBy, id);
+}
+
+export async function restoreTache(db: SQLiteDatabase, id: number): Promise<void> {
+  await db.runAsync('UPDATE taches SET deleted_at = NULL WHERE id = ?', id);
 }
 
 export async function deleteTache(db: SQLiteDatabase, id: number): Promise<void> {

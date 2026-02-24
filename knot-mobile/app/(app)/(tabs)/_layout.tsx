@@ -4,9 +4,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TabButton } from '@/src/components/navigation/TabButton';
 import { Colors } from '@/src/constants/colors';
+import { useAuth } from '@/src/contexts/AuthContext';
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
 
   return (
     <Tabs>
@@ -24,6 +26,12 @@ export default function TabsLayout() {
         <TabTrigger name="projets" href="/(app)/projets" asChild>
           <TabButton icon="folder-outline" iconFocused="folder" label="Projets" />
         </TabTrigger>
+
+        {user?.is_admin && (
+          <TabTrigger name="corbeille" href="/(app)/corbeille" asChild>
+            <TabButton icon="trash-outline" iconFocused="trash" label="Corbeille" />
+          </TabTrigger>
+        )}
 
         <TabTrigger name="settings" href="/(app)/settings" asChild>
           <TabButton icon="settings-outline" iconFocused="settings" label="Réglages" />

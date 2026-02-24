@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { useAuth } from '@/src/contexts/AuthContext';
 import { useProjets } from '@/src/hooks/useProjets';
-import { getNoteById, updateNote, deleteNote, type Note } from '@/src/db/notes';
+import { getNoteById, updateNote, softDeleteNote, type Note } from '@/src/db/notes';
 import {
   getCommentairesByNote,
   createCommentaire,
@@ -187,7 +187,10 @@ export default function NoteDetailScreen() {
                 console.warn('[Delete] Note', note.server_id, 'échoué:', e);
               });
             }
-            await deleteNote(db, note.id);
+            const localUser = user
+              ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', user.id)
+              : null;
+            await softDeleteNote(db, note.id, localUser?.id ?? 0);
             router.back();
           },
         },

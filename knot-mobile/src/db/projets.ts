@@ -12,6 +12,8 @@ export interface Projet {
   team_id: number;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
+  deleted_by: number | null;
   sync_status: string;
   note_count: number;
 }
@@ -20,8 +22,8 @@ export async function getAllProjets(db: SQLiteDatabase, teamId: number): Promise
   return db.getAllAsync<Projet>(
     `SELECT p.*, COUNT(n.id) as note_count
      FROM projets p
-     LEFT JOIN notes n ON n.projet_id = p.id
-     WHERE p.team_id = ? AND p.statut = 1
+     LEFT JOIN notes n ON n.projet_id = p.id AND n.deleted_at IS NULL
+     WHERE p.team_id = ? AND p.statut = 1 AND p.deleted_at IS NULL
      GROUP BY p.id
      ORDER BY p.created_at ASC`,
     teamId,
@@ -82,6 +84,24 @@ export async function updateProjet(
     now,
     id,
   );
+}
+
+export async function softDeleteProjet(db: SQLiteDatabase, id: number, deletedBy: number): Promise<void> {
+  const now = new Date().toISOString();
+  // Cascade soft-delete sur les notes et tâches du projet
+  await db.runAsync(
+    'UPDATE notes SET deleted_at = ?, deleted_by = ? WHERE projet_id = ? AND deleted_at IS NULL',
+    now, deletedBy, id,
+  );
+  await db.runAsync(
+    'UPDATE taches SET deleted_at = ?, deleted_by = ? WHERE projet_id = ? AND deleted_at IS NULL',
+    now, deletedBy, id,
+  );
+  await db.runAsync('UPDATE projets SET deleted_at = ?, deleted_by = ? WHERE id = ?', now, deletedBy, id);
+}
+
+export async function restoreProjet(db: SQLiteDatabase, id: number): Promise<void> {
+  await db.runAsync('UPDATE projets SET deleted_at = NULL WHERE id = ?', id);
 }
 
 export async function deleteProjet(db: SQLiteDatabase, id: number): Promise<void> {

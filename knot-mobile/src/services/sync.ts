@@ -72,6 +72,8 @@ interface ServerNote {
   team_id: number;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
+  deleted_by: number | null;
 }
 
 interface ServerTache {
@@ -86,6 +88,21 @@ interface ServerTache {
   due_date: string | null;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
+  deleted_by: number | null;
+}
+
+interface ServerProjetWithDelete {
+  id: number;
+  titre: string;
+  description: string | null;
+  couleur: string;
+  statut: boolean | number;
+  team_id: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  deleted_by: number | null;
 }
 
 // ── Sync principal ────────────────────────────────────────────────────────────
@@ -134,27 +151,30 @@ export async function syncAll(
   // ── Projets ───────────────────────────────────────────────────────────────
   await safeSync('projets', async () => {
     const res = await api.get<any>(`/teams/${teamServerId}/projets?all=1`);
-    const projets = extractList<ServerProjet>(res);
+    const projets = extractList<ServerProjetWithDelete>(res);
     for (const p of projets) {
       const existing = await db.getFirstAsync<{ id: number }>(
         'SELECT id FROM projets WHERE server_id = ?', p.id,
       );
+      const deletedByRow = p.deleted_by
+        ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', p.deleted_by)
+        : null;
       if (existing) {
         await db.runAsync(
           `UPDATE projets
-           SET titre = ?, description = ?, couleur = ?, statut = ?, updated_at = ?, sync_status = 'synced'
+           SET titre = ?, description = ?, couleur = ?, statut = ?, updated_at = ?, deleted_at = ?, deleted_by = ?, sync_status = 'synced'
            WHERE server_id = ?`,
           p.titre, p.description ?? null, p.couleur ?? '#2F3C73',
-          p.statut ? 1 : 0, p.updated_at, p.id,
+          p.statut ? 1 : 0, p.updated_at, p.deleted_at ?? null, deletedByRow?.id ?? null, p.id,
         );
       } else {
         await db.runAsync(
           `INSERT INTO projets
-             (server_id, sync_id, titre, description, couleur, statut, team_id, created_at, updated_at, sync_status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
+             (server_id, sync_id, titre, description, couleur, statut, team_id, created_at, updated_at, deleted_at, deleted_by, sync_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
           p.id, randomUUID(), p.titre, p.description ?? null,
           p.couleur ?? '#2F3C73', p.statut ? 1 : 0,
-          teamLocalId, p.created_at, p.updated_at,
+          teamLocalId, p.created_at, p.updated_at, p.deleted_at ?? null, deletedByRow?.id ?? null,
         );
       }
     }
@@ -178,23 +198,26 @@ export async function syncAll(
         'SELECT id FROM notes WHERE server_id = ?', n.id,
       );
       const statut = normalizeStatutNote(n.statut ?? 'publie');
+      const noteDeletedByRow = n.deleted_by
+        ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', n.deleted_by)
+        : null;
       if (existing) {
         await db.runAsync(
           `UPDATE notes
-           SET titre = ?, contenu = ?, statut = ?, projet_id = ?, updated_at = ?, sync_status = 'synced'
+           SET titre = ?, contenu = ?, statut = ?, projet_id = ?, updated_at = ?, deleted_at = ?, deleted_by = ?, sync_status = 'synced'
            WHERE server_id = ?`,
           n.titre, n.contenu ?? '', statut,
-          projetRow.id, n.updated_at, n.id,
+          projetRow.id, n.updated_at, n.deleted_at ?? null, noteDeletedByRow?.id ?? null, n.id,
         );
       } else {
         await db.runAsync(
           `INSERT INTO notes
-             (server_id, sync_id, titre, contenu, statut, projet_id, auteur_id, team_id, created_at, updated_at, sync_status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
+             (server_id, sync_id, titre, contenu, statut, projet_id, auteur_id, team_id, created_at, updated_at, deleted_at, deleted_by, sync_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
           n.id, randomUUID(), n.titre, n.contenu ?? '',
           statut, projetRow.id,
           auteurRow?.id ?? 1, teamLocalId,
-          n.created_at, n.updated_at,
+          n.created_at, n.updated_at, n.deleted_at ?? null, noteDeletedByRow?.id ?? null,
         );
       }
     }
@@ -224,26 +247,29 @@ export async function syncAll(
       const existing = await db.getFirstAsync<{ id: number }>(
         'SELECT id FROM taches WHERE server_id = ?', t.id,
       );
+      const tacheDeletedByRow = t.deleted_by
+        ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', t.deleted_by)
+        : null;
       if (existing) {
         await db.runAsync(
           `UPDATE taches
            SET titre = ?, description = ?, statut = ?, projet_id = ?,
-               assigne_id = ?, due_date = ?, updated_at = ?, sync_status = 'synced'
+               assigne_id = ?, due_date = ?, updated_at = ?, deleted_at = ?, deleted_by = ?, sync_status = 'synced'
            WHERE server_id = ?`,
           t.titre, t.description ?? null, t.statut ?? 'todo',
           projetRow.id, assigneRow?.id ?? null, t.due_date ?? null,
-          t.updated_at, t.id,
+          t.updated_at, t.deleted_at ?? null, tacheDeletedByRow?.id ?? null, t.id,
         );
       } else {
         await db.runAsync(
           `INSERT INTO taches
              (server_id, sync_id, titre, description, statut, projet_id, auteur_id,
-              assigne_id, team_id, due_date, created_at, updated_at, sync_status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
+              assigne_id, team_id, due_date, created_at, updated_at, deleted_at, deleted_by, sync_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
           t.id, randomUUID(), t.titre, t.description ?? null,
           t.statut ?? 'todo', projetRow.id, auteurRow?.id ?? 1,
           assigneRow?.id ?? null, teamLocalId,
-          t.due_date ?? null, t.created_at, t.updated_at,
+          t.due_date ?? null, t.created_at, t.updated_at, t.deleted_at ?? null, tacheDeletedByRow?.id ?? null,
         );
       }
     }

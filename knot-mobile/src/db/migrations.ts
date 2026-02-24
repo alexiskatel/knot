@@ -1,6 +1,6 @@
 import { type SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 4;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
   const result = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
@@ -145,5 +145,30 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
         PRAGMA user_version = 2;
       `);
     });
+  }
+
+  if (currentVersion < 3) {
+    const alters3: [string, string][] = [
+      ['notes',   'deleted_at TEXT'],
+      ['taches',  'deleted_at TEXT'],
+      ['projets', 'deleted_at TEXT'],
+      ['users',   'is_admin INTEGER NOT NULL DEFAULT 0'],
+    ];
+    for (const [table, col] of alters3) {
+      try { await db.runAsync(`ALTER TABLE ${table} ADD COLUMN ${col}`); } catch {}
+    }
+    await db.runAsync('PRAGMA user_version = 3');
+  }
+
+  if (currentVersion < 4) {
+    const alters4: [string, string][] = [
+      ['notes',   'deleted_by INTEGER REFERENCES users(id)'],
+      ['taches',  'deleted_by INTEGER REFERENCES users(id)'],
+      ['projets', 'deleted_by INTEGER REFERENCES users(id)'],
+    ];
+    for (const [table, col] of alters4) {
+      try { await db.runAsync(`ALTER TABLE ${table} ADD COLUMN ${col}`); } catch {}
+    }
+    await db.runAsync('PRAGMA user_version = 4');
   }
 }

@@ -13,6 +13,8 @@ export interface Note {
   team_id: number;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
+  deleted_by: number | null;
   sync_status: string;
   // Joined fields
   projet_titre?: string;
@@ -32,14 +34,14 @@ export async function getNotesByTeam(
        FROM notes n
        LEFT JOIN projets p ON p.id = n.projet_id
        LEFT JOIN users u ON u.id = n.auteur_id
-       WHERE n.team_id = ? AND n.projet_id = ? AND n.statut != 'archive'
+       WHERE n.team_id = ? AND n.projet_id = ? AND n.statut != 'archive' AND n.deleted_at IS NULL
        ORDER BY n.updated_at DESC`
     : `SELECT n.*, p.titre as projet_titre, p.couleur as projet_couleur,
               u.nom as auteur_nom, u.prenom as auteur_prenom
        FROM notes n
        LEFT JOIN projets p ON p.id = n.projet_id
        LEFT JOIN users u ON u.id = n.auteur_id
-       WHERE n.team_id = ? AND n.statut != 'archive'
+       WHERE n.team_id = ? AND n.statut != 'archive' AND n.deleted_at IS NULL
        ORDER BY n.updated_at DESC`;
 
   return db.getAllAsync<Note>(sql, ...(projetId ? [teamId, projetId] : [teamId]));
@@ -124,6 +126,15 @@ export async function updateNote(
     now,
     id,
   );
+}
+
+export async function softDeleteNote(db: SQLiteDatabase, id: number, deletedBy: number): Promise<void> {
+  const now = new Date().toISOString();
+  await db.runAsync('UPDATE notes SET deleted_at = ?, deleted_by = ? WHERE id = ?', now, deletedBy, id);
+}
+
+export async function restoreNote(db: SQLiteDatabase, id: number): Promise<void> {
+  await db.runAsync('UPDATE notes SET deleted_at = NULL WHERE id = ?', id);
 }
 
 export async function deleteNote(db: SQLiteDatabase, id: number): Promise<void> {

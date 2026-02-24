@@ -8,6 +8,7 @@ export interface AuthUser {
   nom: string;
   prenom: string;
   email: string;
+  is_admin: boolean;
 }
 
 export interface AuthTeam {
@@ -45,7 +46,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const storedTeam = Storage.getItemSync('team');
 
         if (apiKey && storedUser && storedTeam) {
-          setUser(JSON.parse(storedUser));
+          const parsedUser = JSON.parse(storedUser);
+          console.log('[Auth] User connecté:', parsedUser);
+          setUser(parsedUser);
           setTeam(JSON.parse(storedTeam));
         }
       } catch {
@@ -73,6 +76,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     Storage.setItemSync('api_key', apiKey);
     Storage.setItemSync('team_id', String(authTeam.id));
     Storage.setItemSync('user', JSON.stringify(authUser));
+    // console.log("User: ", authUser);
+    
     Storage.setItemSync('team', JSON.stringify(authTeam));
 
     // Persist team to local SQLite — INSERT OR IGNORE preserves the existing row id
