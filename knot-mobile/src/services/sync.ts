@@ -1,6 +1,9 @@
 import { type SQLiteDatabase } from 'expo-sqlite';
 import { randomUUID } from 'expo-crypto';
 import { api } from '../api/client';
+import { createNotification } from '../db/notifications';
+import { sendLocalNotification } from './pushNotifications';
+import { upsertCommentaireFromServer } from '../db/commentaires';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -92,6 +95,30 @@ interface ServerTache {
   deleted_by: number | null;
 }
 
+interface ServerCommentaire {
+  id: number;
+  contenu: string;
+  type: string;
+  note_id: number | null;
+  tache_id: number | null;
+  auteur_id: number;
+  team_id: number;
+  sync_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ServerLiaison {
+  id: number;
+  source_type: 'note' | 'tache';
+  source_id: number;
+  target_type: 'note' | 'tache';
+  target_id: number;
+  team_id: number;
+  sync_id: string;
+  created_at: string;
+}
+
 interface ServerProjetWithDelete {
   id: number;
   titre: string;
@@ -111,7 +138,17 @@ export async function syncAll(
   db: SQLiteDatabase,
   teamLocalId: number,
   teamServerId: number,
+  currentUserServerId?: number,
 ): Promise<void> {
+
+  // Resolve current user's local ID for assignment detection
+  let currentUserLocalId: number | null = null;
+  if (currentUserServerId) {
+    const userRow = await db.getFirstAsync<{ id: number }>(
+      'SELECT id FROM users WHERE server_id = ?', currentUserServerId,
+    );
+    currentUserLocalId = userRow?.id ?? null;
+  }
 
   // ── Team info ─────────────────────────────────────────────────────────────
   await safeSync('team', async () => {
@@ -276,7 +313,82 @@ export async function syncAll(
           assigneRow?.id ?? null, teamLocalId,
           t.due_date ?? null, t.created_at, t.updated_at, t.deleted_at ?? null, tacheDeletedByRow?.id ?? null,
         );
+
+        // Notification d'assignation : nouvelle tâche assignée à l'utilisateur courant
+        if (
+          currentUserLocalId !== null &&
+          assigneRow?.id === currentUserLocalId &&
+          t.statut !== 'done' &&
+          !t.deleted_at
+        ) {
+          const newTacheRow = await db.getFirstAsync<{ id: number }>(
+            'SELECT id FROM taches WHERE server_id = ?', t.id,
+          );
+          if (newTacheRow) {
+            await safeSync('notif-assignment', async () => {
+              await createNotification(db, {
+                ref_id: `assignment_tache_${t.id}`,
+                type: 'assignment',
+                titre: 'Nouvelle tâche assignée',
+                corps: `"${t.titre}" vous a été assignée`,
+                entity_type: 'tache',
+                entity_id: newTacheRow.id,
+              });
+              await sendLocalNotification(
+                'Nouvelle tâche assignée',
+                `"${t.titre}" vous a été assignée`,
+                { entity_type: 'tache', entity_id: newTacheRow.id },
+              );
+            });
+          }
+        }
       }
+    }
+  });
+
+  // ── Commentaires (pull) ───────────────────────────────────────────────────
+  await safeSync('commentaires', async () => {
+    const res = await api.get<any>(`/commentaires?team_id=${teamServerId}&all=1`);
+    const serverCommentaires = extractList<ServerCommentaire>(res);
+
+    for (const c of serverCommentaires) {
+      const auteurRow = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM users WHERE server_id = ?', c.auteur_id,
+      );
+      if (!auteurRow) continue;
+
+      let noteLocalId: number | undefined;
+      let tacheLocalId: number | undefined;
+
+      if (c.note_id) {
+        const noteRow = await db.getFirstAsync<{ id: number }>(
+          'SELECT id FROM notes WHERE server_id = ?', c.note_id,
+        );
+        noteLocalId = noteRow?.id;
+      }
+      if (c.tache_id) {
+        const tacheRow = await db.getFirstAsync<{ id: number }>(
+          'SELECT id FROM taches WHERE server_id = ?', c.tache_id,
+        );
+        tacheLocalId = tacheRow?.id;
+      }
+
+      if (!noteLocalId && !tacheLocalId) continue;
+
+      await upsertCommentaireFromServer(
+        db,
+        {
+          id: c.id,
+          contenu: c.contenu,
+          created_at: c.created_at,
+          updated_at: c.updated_at,
+          sync_id: c.sync_id ?? undefined,
+        },
+        auteurRow.id,
+        teamLocalId,
+        noteLocalId,
+        tacheLocalId,
+      );
     }
   });
 
@@ -308,6 +420,70 @@ export async function syncAll(
     );
     for (const t of pending) {
       await pushTache(db, t.id, teamServerId);
+    }
+  });
+
+  // ── Push pending commentaires ─────────────────────────────────────────────
+  await safeSync('push-commentaires-pending', async () => {
+    const pending = await db.getAllAsync<{ id: number }>(
+      "SELECT id FROM commentaires WHERE sync_status = 'pending' AND team_id = ?",
+      teamLocalId,
+    );
+    for (const c of pending) {
+      await pushCommentaire(db, c.id);
+    }
+  });
+
+  // ── Liaisons (pull) ───────────────────────────────────────────────────────
+  await safeSync('liaisons', async () => {
+    const res = await api.get<any>(`/teams/${teamServerId}/liaisons?all=1`);
+    const serverLiaisons = extractList<ServerLiaison>(res);
+
+    for (const l of serverLiaisons) {
+      const sourceRow = await db.getFirstAsync<{ id: number }>(
+        `SELECT id FROM ${l.source_type === 'note' ? 'notes' : 'taches'} WHERE server_id = ?`,
+        l.source_id,
+      );
+      const targetRow = await db.getFirstAsync<{ id: number }>(
+        `SELECT id FROM ${l.target_type === 'note' ? 'notes' : 'taches'} WHERE server_id = ?`,
+        l.target_id,
+      );
+      if (!sourceRow || !targetRow) continue;
+
+      const existing = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM liaisons WHERE server_id = ?', l.id,
+      );
+      if (!existing) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO liaisons
+             (server_id, sync_id, source_type, source_id, target_type, target_id, team_id, created_at, sync_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
+          l.id, l.sync_id,
+          l.source_type, sourceRow.id,
+          l.target_type, targetRow.id,
+          teamLocalId, l.created_at,
+        );
+      }
+    }
+
+    // Delete local liaisons whose server_id is no longer in the server list
+    if (serverLiaisons.length > 0) {
+      const serverIds = serverLiaisons.map((l) => l.id);
+      await db.runAsync(
+        `DELETE FROM liaisons WHERE server_id IS NOT NULL AND server_id NOT IN (${serverIds.map(() => '?').join(',')})`,
+        ...serverIds,
+      );
+    }
+  });
+
+  // ── Push pending liaisons ─────────────────────────────────────────────────
+  await safeSync('push-liaisons-pending', async () => {
+    const pending = await db.getAllAsync<{ id: number }>(
+      "SELECT id FROM liaisons WHERE sync_status = 'pending' AND team_id = ?",
+      teamLocalId,
+    );
+    for (const l of pending) {
+      await pushLiaison(db, l.id, teamServerId);
     }
   });
 }
@@ -448,42 +624,101 @@ export async function pushTache(
   }
 }
 
+export async function pushLiaison(
+  db: SQLiteDatabase,
+  liaisonLocalId: number,
+  teamServerId: number,
+): Promise<void> {
+  const liaison = await db.getFirstAsync<any>('SELECT * FROM liaisons WHERE id = ?', liaisonLocalId);
+  if (!liaison) return;
+
+  // Resolve server IDs depending on type
+  const sourceServerRow = await db.getFirstAsync<{ server_id: number | null }>(
+    `SELECT server_id FROM ${liaison.source_type === 'note' ? 'notes' : 'taches'} WHERE id = ?`,
+    liaison.source_id,
+  );
+  const targetServerRow = await db.getFirstAsync<{ server_id: number | null }>(
+    `SELECT server_id FROM ${liaison.target_type === 'note' ? 'notes' : 'taches'} WHERE id = ?`,
+    liaison.target_id,
+  );
+
+  if (!sourceServerRow?.server_id || !targetServerRow?.server_id) {
+    console.warn('[Push] Liaison', liaisonLocalId, '- source ou target sans server_id, push ignoré');
+    return;
+  }
+
+  if (liaison.server_id) {
+    // Already pushed, mark synced
+    await db.runAsync(`UPDATE liaisons SET sync_status = 'synced' WHERE id = ?`, liaisonLocalId);
+    return;
+  }
+
+  try {
+    const res = await api.post<any>('/liaisons', {
+      source_type: liaison.source_type,
+      source_id:   sourceServerRow.server_id,
+      target_type: liaison.target_type,
+      target_id:   targetServerRow.server_id,
+      sync_id:     liaison.sync_id,
+    });
+    const created = res.list?.list ?? res.list;
+    if (created?.id) {
+      await db.runAsync(
+        `UPDATE liaisons SET server_id = ?, sync_status = 'synced' WHERE id = ?`,
+        created.id, liaisonLocalId,
+      );
+    }
+  } catch (e) {
+    console.warn('[Push] Liaison', liaisonLocalId, 'échoué:', e);
+  }
+}
+
 export async function pushCommentaire(
   db: SQLiteDatabase,
   commentaireLocalId: number,
 ): Promise<void> {
   const commentaire = await db.getFirstAsync<any>(
     `SELECT c.*,
-            u.server_id as auteur_server_id,
-            n.server_id as note_server_id,
-            t.server_id as tache_server_id
+            u.server_id  as auteur_server_id,
+            n.server_id  as note_server_id,
+            t.server_id  as tache_server_id,
+            tm.server_id as team_server_id
      FROM commentaires c
-     LEFT JOIN users u ON c.auteur_id = u.id
-     LEFT JOIN notes n ON c.note_id = n.id
-     LEFT JOIN taches t ON c.tache_id = t.id
+     LEFT JOIN users u  ON c.auteur_id = u.id
+     LEFT JOIN notes n  ON c.note_id   = n.id
+     LEFT JOIN taches t ON c.tache_id  = t.id
+     LEFT JOIN teams tm ON c.team_id   = tm.id
      WHERE c.id = ?`,
     commentaireLocalId,
   );
   if (!commentaire) return;
 
-  // Déterminer la route selon note ou tâche
-  let route: string | null = null;
-  if (commentaire.note_id !== null && commentaire.note_server_id) {
-    route = `/notes/${commentaire.note_server_id}/commentaires`;
-  } else if (commentaire.tache_id !== null && commentaire.tache_server_id) {
-    route = `/taches/${commentaire.tache_server_id}/commentaires`;
+  if (!commentaire.auteur_server_id || !commentaire.team_server_id) {
+    console.warn('[Push] Commentaire', commentaireLocalId, '- auteur ou team sans server_id, ignoré');
+    return;
   }
-
-  if (!route || !commentaire.auteur_server_id) {
-    console.warn('[Push] Commentaire', commentaireLocalId, '- route ou auteur manquant, push ignoré');
+  if (commentaire.note_id !== null && !commentaire.note_server_id) {
+    console.warn('[Push] Commentaire', commentaireLocalId, '- note sans server_id, ignoré');
+    return;
+  }
+  if (commentaire.tache_id !== null && !commentaire.tache_server_id) {
+    console.warn('[Push] Commentaire', commentaireLocalId, '- tache sans server_id, ignoré');
+    return;
+  }
+  if (!commentaire.note_server_id && !commentaire.tache_server_id) {
+    console.warn('[Push] Commentaire', commentaireLocalId, '- ni note ni tache, ignoré');
     return;
   }
 
   try {
-    const res = await api.post<any>(route, {
-      contenu: commentaire.contenu,
+    const res = await api.post<any>('/commentaires', {
+      contenu:   commentaire.contenu,
+      type:      'texte',
+      note_id:   commentaire.note_server_id  ?? undefined,
+      tache_id:  commentaire.tache_server_id ?? undefined,
       auteur_id: commentaire.auteur_server_id,
-      sync_id: commentaire.sync_id,
+      team_id:   commentaire.team_server_id,
+      sync_id:   commentaire.sync_id,
     });
     const created = res.list;
     if (created?.id) {
@@ -494,5 +729,145 @@ export async function pushCommentaire(
     }
   } catch (e) {
     console.warn('[Push] Commentaire', commentaireLocalId, 'échoué:', e);
+  }
+}
+
+// ── Vérification des échéances ────────────────────────────────────────────────
+// Crée des notifications locales pour les tâches dues bientôt ou en retard
+// assignées à l'utilisateur courant. Dédupliquées par ref_id journalier.
+
+export async function checkDueNotifications(
+  db: SQLiteDatabase,
+  currentUserServerId: number,
+  isAdmin = false,
+): Promise<void> {
+  const userRow = await db.getFirstAsync<{ id: number }>(
+    'SELECT id FROM users WHERE server_id = ?', currentUserServerId,
+  );
+  if (!userRow) return;
+  const currentUserLocalId = userRow.id;
+  const today = new Date().toDateString();
+  const in48h = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+
+  // ── Tâches dues dans les 48h assignées à l'utilisateur courant ────────────
+  const dueSoon = await db.getAllAsync<{ id: number; titre: string; due_date: string }>(
+    `SELECT id, titre, due_date FROM taches
+     WHERE assigne_id = ? AND statut != 'done' AND deleted_at IS NULL
+       AND due_date IS NOT NULL AND due_date > datetime('now') AND due_date <= ?`,
+    currentUserLocalId, in48h,
+  );
+  for (const t of dueSoon) {
+    const daysLeft = Math.max(
+      Math.ceil((new Date(t.due_date).getTime() - Date.now()) / (24 * 60 * 60 * 1000)),
+      0,
+    );
+    await safeSync('notif-due_soon', async () => {
+      await createNotification(db, {
+        ref_id: `due_soon_${t.id}_${today}`,
+        type: 'due_soon',
+        titre: 'Échéance proche',
+        corps: `"${t.titre}" est due dans ${daysLeft} jour(s)`,
+        entity_type: 'tache',
+        entity_id: t.id,
+      });
+      await sendLocalNotification(
+        'Échéance proche',
+        `"${t.titre}" est due dans ${daysLeft} jour(s)`,
+        { entity_type: 'tache', entity_id: t.id },
+      );
+    });
+  }
+
+  // ── Tâches en retard assignées à l'utilisateur courant ───────────────────
+  const overdue = await db.getAllAsync<{ id: number; titre: string }>(
+    `SELECT id, titre FROM taches
+     WHERE assigne_id = ? AND statut != 'done' AND deleted_at IS NULL
+       AND due_date IS NOT NULL AND due_date < datetime('now')`,
+    currentUserLocalId,
+  );
+  for (const t of overdue) {
+    await safeSync('notif-overdue', async () => {
+      await createNotification(db, {
+        ref_id: `overdue_${t.id}_${today}`,
+        type: 'overdue',
+        titre: 'Tâche en retard',
+        corps: `"${t.titre}" est en retard`,
+        entity_type: 'tache',
+        entity_id: t.id,
+      });
+      await sendLocalNotification(
+        'Tâche en retard',
+        `"${t.titre}" est en retard`,
+        { entity_type: 'tache', entity_id: t.id },
+      );
+    });
+  }
+
+  // ── Notifications admin : toutes les tâches critiques de l'équipe ─────────
+  if (!isAdmin) return;
+
+  // Dues dans les 48h (autres membres)
+  const adminDueSoon = await db.getAllAsync<{
+    id: number; titre: string; due_date: string;
+    assigne_nom: string | null; assigne_prenom: string | null;
+  }>(
+    `SELECT t.id, t.titre, t.due_date, u.nom as assigne_nom, u.prenom as assigne_prenom
+     FROM taches t
+     LEFT JOIN users u ON t.assigne_id = u.id
+     WHERE (t.assigne_id IS NULL OR t.assigne_id != ?) AND t.statut != 'done' AND t.deleted_at IS NULL
+       AND t.due_date IS NOT NULL AND t.due_date > datetime('now') AND t.due_date <= ?`,
+    currentUserLocalId, in48h,
+  );
+  for (const t of adminDueSoon) {
+    const daysLeft = Math.max(
+      Math.ceil((new Date(t.due_date).getTime() - Date.now()) / (24 * 60 * 60 * 1000)),
+      0,
+    );
+    const assigneName = t.assigne_prenom
+      ? `${t.assigne_prenom} ${t.assigne_nom ?? ''}`.trim()
+      : (t.assigne_nom ?? 'Non assigné');
+    await safeSync('notif-admin-due_soon', async () => {
+      await createNotification(db, {
+        ref_id: `admin_due_soon_${t.id}_${today}`,
+        type: 'due_soon',
+        titre: 'Échéance proche (équipe)',
+        corps: `"${t.titre}" (${assigneName}) — J-${daysLeft}`,
+        entity_type: 'tache',
+        entity_id: t.id,
+      });
+    });
+  }
+
+  // En retard (autres membres)
+  const adminOverdue = await db.getAllAsync<{
+    id: number; titre: string;
+    assigne_nom: string | null; assigne_prenom: string | null;
+  }>(
+    `SELECT t.id, t.titre, u.nom as assigne_nom, u.prenom as assigne_prenom
+     FROM taches t
+     LEFT JOIN users u ON t.assigne_id = u.id
+     WHERE (t.assigne_id IS NULL OR t.assigne_id != ?) AND t.statut != 'done' AND t.deleted_at IS NULL
+       AND t.due_date IS NOT NULL AND t.due_date < datetime('now')`,
+    currentUserLocalId,
+  );
+  for (const t of adminOverdue) {
+    const assigneName = t.assigne_prenom
+      ? `${t.assigne_prenom} ${t.assigne_nom ?? ''}`.trim()
+      : (t.assigne_nom ?? 'Non assigné');
+    await safeSync('notif-admin-overdue', async () => {
+      await createNotification(db, {
+        ref_id: `admin_overdue_${t.id}_${today}`,
+        type: 'overdue',
+        titre: 'Tâche en retard (équipe)',
+        corps: `"${t.titre}" (${assigneName}) est en retard`,
+        entity_type: 'tache',
+        entity_id: t.id,
+      });
+      await sendLocalNotification(
+        'Tâche en retard (équipe)',
+        `"${t.titre}" (${assigneName}) est en retard`,
+        { entity_type: 'tache', entity_id: t.id },
+      );
+    });
   }
 }

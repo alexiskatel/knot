@@ -18,6 +18,7 @@ class Commentaire extends Model
         'contenu',
         'type',
         'note_id',
+        'tache_id',
         'auteur_id',
         'team_id',
         'sync_id',
@@ -26,6 +27,7 @@ class Commentaire extends Model
 
     protected $casts = [
         'note_id' => 'integer',
+        'tache_id' => 'integer',
         'auteur_id' => 'integer',
         'team_id' => 'integer'
     ];
@@ -36,6 +38,14 @@ class Commentaire extends Model
     public function note(): BelongsTo
     {
         return $this->belongsTo(Note::class);
+    }
+
+    /**
+     * Récupère la tâche associée au commentaire
+     */
+    public function tache(): BelongsTo
+    {
+        return $this->belongsTo(Tache::class);
     }
 
     /**

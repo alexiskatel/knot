@@ -27,15 +27,15 @@ export default function TabsLayout() {
           <TabButton icon="folder-outline" iconFocused="folder" label="Projets" />
         </TabTrigger>
 
+        <TabTrigger name="settings" href="/(app)/settings" asChild>
+          <TabButton icon="settings-outline" iconFocused="settings" label="Réglages" />
+        </TabTrigger>
+
         {user?.is_admin && (
           <TabTrigger name="corbeille" href="/(app)/corbeille" asChild>
             <TabButton icon="trash-outline" iconFocused="trash" label="Corbeille" />
           </TabTrigger>
         )}
-
-        <TabTrigger name="settings" href="/(app)/settings" asChild>
-          <TabButton icon="settings-outline" iconFocused="settings" label="Réglages" />
-        </TabTrigger>
 
         {/* <SyncTabButton /> */}
       </TabList>

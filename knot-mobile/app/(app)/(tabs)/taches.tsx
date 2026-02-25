@@ -124,8 +124,10 @@ function TacheCard({ tache, onPress }: { tache: Tache; onPress: () => void }) {
   const now = Date.now();
   const dueMs = tache.due_date ? new Date(tache.due_date).getTime() : null;
   const isOverdue = dueMs !== null && tache.statut !== 'done' && dueMs < now;
-  const isDueSoon = dueMs !== null && tache.statut !== 'done' && !isOverdue
-    && (dueMs - now) <= 24 * 60 * 60 * 1000;
+  const daysLeft = dueMs !== null && tache.statut !== 'done' && !isOverdue
+    ? Math.ceil((dueMs - now) / (24 * 60 * 60 * 1000))
+    : null;
+  const isDueUrgent = daysLeft !== null && daysLeft <= 2;
 
   return (
     <Pressable onPress={onPress} style={styles.card}>
@@ -145,9 +147,11 @@ function TacheCard({ tache, onPress }: { tache: Tache; onPress: () => void }) {
                 <Text style={styles.overdueBadgeText}>En retard</Text>
               </View>
             )}
-            {isDueSoon && (
-              <View style={styles.dueSoonBadge}>
-                <Text style={styles.dueSoonBadgeText}>Bientôt</Text>
+            {daysLeft !== null && (
+              <View style={isDueUrgent ? styles.dueUrgentBadge : styles.dueSoonBadge}>
+                <Text style={isDueUrgent ? styles.dueUrgentBadgeText : styles.dueSoonBadgeText}>
+                  J-{daysLeft}
+                </Text>
               </View>
             )}
             {isPending && <Ionicons name="cloud-upload-outline" size={13} color={Colors.textDisabled} />}
@@ -162,6 +166,12 @@ function TacheCard({ tache, onPress }: { tache: Tache; onPress: () => void }) {
           </View>
 
           <View style={styles.cardMetaRight}>
+            {(tache.commentaire_count ?? 0) > 0 && (
+              <View style={styles.metaChip}>
+                <Ionicons name="chatbubble-outline" size={10} color={Colors.textDisabled} />
+                <Text style={styles.metaChipText}>{tache.commentaire_count}</Text>
+              </View>
+            )}
             {assigneLabel && (
               <View style={styles.metaChip}>
                 <Ionicons name="person-outline" size={10} color={Colors.textDisabled} />
@@ -173,12 +183,13 @@ function TacheCard({ tache, onPress }: { tache: Tache; onPress: () => void }) {
                 <Ionicons
                   name="calendar-outline"
                   size={10}
-                  color={isOverdue ? Colors.error : isDueSoon ? Colors.warning : Colors.textDisabled}
+                  color={isOverdue ? Colors.error : isDueUrgent ? Colors.error : daysLeft !== null ? Colors.warning : Colors.textDisabled}
                 />
                 <Text style={[
                   styles.metaChipText,
                   isOverdue && { color: Colors.error },
-                  isDueSoon && !isOverdue && { color: Colors.warning },
+                  !isOverdue && isDueUrgent && { color: Colors.error },
+                  !isOverdue && !isDueUrgent && daysLeft !== null && { color: Colors.warning },
                 ]}>{dueDateStr}</Text>
               </View>
             )}
@@ -665,6 +676,13 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   dueSoonBadgeText: { fontSize: 9, fontWeight: '700', color: Colors.warning },
+  dueUrgentBadge: {
+    backgroundColor: Colors.error + '22',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  dueUrgentBadgeText: { fontSize: 9, fontWeight: '700', color: Colors.error },
 
   // Empty
   empty: { alignItems: 'center', paddingTop: 60, gap: 10 },

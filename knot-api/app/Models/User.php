@@ -39,6 +39,7 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'statut' => 'bool',
+        'is_admin' => 'bool',
         'date_creation' => 'datetime',
         'structure_id' => 'int',
         'role_id' => 'int',
@@ -59,6 +60,7 @@ class User extends Authenticatable
         'password',
         'api_key',
         'statut',
+        'is_admin',
         'date_creation',
         'structure_id',
         'role_id',

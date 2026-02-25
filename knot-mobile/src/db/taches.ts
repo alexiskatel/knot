@@ -25,6 +25,7 @@ export interface Tache {
   auteur_prenom?: string;
   assigne_nom?: string;
   assigne_prenom?: string;
+  commentaire_count?: number;
 }
 
 export async function getTachesByTeam(
@@ -35,7 +36,8 @@ export async function getTachesByTeam(
   const sql = projetId
     ? `SELECT t.*, p.titre as projet_titre, p.couleur as projet_couleur,
               u.nom as auteur_nom, u.prenom as auteur_prenom,
-              a.nom as assigne_nom, a.prenom as assigne_prenom
+              a.nom as assigne_nom, a.prenom as assigne_prenom,
+              (SELECT COUNT(*) FROM commentaires WHERE tache_id = t.id) as commentaire_count
        FROM taches t
        LEFT JOIN projets p ON p.id = t.projet_id
        LEFT JOIN users u ON u.id = t.auteur_id
@@ -44,7 +46,8 @@ export async function getTachesByTeam(
        ORDER BY t.due_date ASC, t.created_at DESC`
     : `SELECT t.*, p.titre as projet_titre, p.couleur as projet_couleur,
               u.nom as auteur_nom, u.prenom as auteur_prenom,
-              a.nom as assigne_nom, a.prenom as assigne_prenom
+              a.nom as assigne_nom, a.prenom as assigne_prenom,
+              (SELECT COUNT(*) FROM commentaires WHERE tache_id = t.id) as commentaire_count
        FROM taches t
        LEFT JOIN projets p ON p.id = t.projet_id
        LEFT JOIN users u ON u.id = t.auteur_id

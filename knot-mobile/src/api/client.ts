@@ -37,13 +37,14 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   }
   
 
+  console.log(`Requete ${method} vers: `, `${API_BASE_URL}${endpoint}`);
   const res = await fetch(`${API_BASE_URL}${endpoint}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   
-  // console.log(res);
+  // console.log("Avant: ", res);
   const json = await res.json();
   console.log('Réponse API: ', json);
   

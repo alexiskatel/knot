@@ -210,7 +210,7 @@ abstract class BaseApiController extends Controller
     /**
      * Remove the specified resource
      */
-    public function destroy(int $id): JsonResponse
+    public function destroy(Request $request, int $id): JsonResponse
     {
         $model = $this->findModel($id);
 
@@ -222,6 +222,13 @@ abstract class BaseApiController extends Controller
                     $media->delete();
                 }
             }
+        }
+
+        // Soft-delete : enregistrer qui a supprimé
+        $apiUser = $request->attributes->get('api_user');
+        if ($apiUser && in_array('deleted_by', $model->getFillable())) {
+            $model->deleted_by = $apiUser->id;
+            $model->saveQuietly();
         }
 
         $model->delete();

@@ -3,8 +3,9 @@ import { AppState, type AppStateStatus } from 'react-native';
 import Storage from 'expo-sqlite/kv-store';
 import { useSQLiteContext } from 'expo-sqlite';
 import { usePathname } from 'expo-router';
+import NetInfo from '@react-native-community/netinfo';
 
-import { syncAll } from '../services/sync';
+import { syncAll, checkDueNotifications } from '../services/sync';
 import { useAuth } from './AuthContext';
 
 interface SyncContextValue {
@@ -26,6 +27,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [syncVersion, setSyncVersion] = useState(0);
   const isSyncingRef = useRef(false);
   const lastSyncAtRef = useRef<number>(0);
+  const wasConnectedRef = useRef<boolean | null>(null);
 
   async function sync() {
     if (isSyncingRef.current || !user || !team) return;
@@ -37,8 +39,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         team.id,
       );
       if (!teamRow) return;
-      await syncAll(db, teamRow.id, team.id);
+      await syncAll(db, teamRow.id, team.id, user.id);
       await refreshFromDb();
+      // Vérification des notifications d'échéance après chaque sync
+      checkDueNotifications(db, user.id, user.is_admin === true).catch(() => {});
       const now = new Date();
       setLastSyncAt(now);
       lastSyncAtRef.current = Date.now();
@@ -70,6 +74,19 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       if (state === 'active') sync();
     });
     return () => sub.remove();
+  }, [user?.id]);
+
+  // Sync automatique quand la connectivité est restaurée
+  useEffect(() => {
+    if (!user) return;
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const isNowConnected = state.isConnected === true && state.isInternetReachable !== false;
+      if (isNowConnected && wasConnectedRef.current === false) {
+        sync();
+      }
+      wasConnectedRef.current = isNowConnected;
+    });
+    return () => unsubscribe();
   }, [user?.id]);
 
   const bumpSyncVersion = () => setSyncVersion((v) => v + 1);

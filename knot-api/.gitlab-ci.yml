@@ -28,6 +28,8 @@ laravel_update_code:
 # ----------------------------------------------------
 laravel_run_migrations:
   stage: database
+  only: 
+   - prod
   script:
     - ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $DEPLOY_USER@$VPS_HOST 'cd /var/www/knot && php artisan migrate --force'
 
@@ -35,5 +37,7 @@ laravel_run_migrations:
 # ----------------------------------------------------
 laravel_finalize:
   stage: finalize
+  only: 
+   - prod
   script:
     - ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $DEPLOY_USER@$VPS_HOST 'cd /var/www/knot && php artisan optimize:clear'

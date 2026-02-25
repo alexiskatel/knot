@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -32,8 +32,16 @@ import {
   type Commentaire,
 } from '@/src/db/commentaires';
 import { softDeleteTache, getTacheById, updateTache, type Tache } from '@/src/db/taches';
+import {
+  getLiaisonsByTache,
+  createLiaison,
+  deleteLiaison,
+  type LinkedItem,
+} from '@/src/db/liaisons';
 import { useProjets } from '@/src/hooks/useProjets';
-import { pushCommentaire, pushTache } from '@/src/services/sync';
+import { pushCommentaire, pushTache, pushLiaison } from '@/src/services/sync';
+import { createNotification } from '@/src/db/notifications';
+import { sendLocalNotification } from '@/src/services/pushNotifications';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -100,6 +108,22 @@ export default function TacheDetailScreen() {
   const [isLoadingComments, setIsLoadingComments] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
+  // Mention state
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionStart, setMentionStart] = useState(0);
+
+  // Liaisons state
+  const [liaisons, setLiaisons] = useState<LinkedItem[]>([]);
+  const [showLiaisonModal, setShowLiaisonModal] = useState(false);
+  const [modalStep, setModalStep] = useState<'projet' | 'type' | 'items'>('projet');
+  const [modalProjetId, setModalProjetId] = useState<number | null>(null);
+  const [modalType, setModalType] = useState<'note' | 'tache'>('note');
+  const [modalItems, setModalItems] = useState<{ id: number; titre: string; statut: string }[]>([]);
+  const [modalSearch, setModalSearch] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [isLoadingModalItems, setIsLoadingModalItems] = useState(false);
+  const [isAddingLiaisons, setIsAddingLiaisons] = useState(false);
+
   const load = useCallback(async () => {
     if (!id) return;
     setIsLoading(true);
@@ -152,6 +176,10 @@ export default function TacheDetailScreen() {
           'SELECT id FROM teams WHERE server_id = ?', team.id,
         );
         if (teamRow) {
+          const mentionTag = user
+            ? `@${user.prenom ? `${user.prenom} ${user.nom}` : user.nom}`.toLowerCase()
+            : null;
+
           for (const c of list) {
             const auteurRow = await db.getFirstAsync<{ id: number }>(
               'SELECT id FROM users WHERE server_id = ?', c.auteur_id ?? c.auteur?.id,
@@ -163,6 +191,28 @@ export default function TacheDetailScreen() {
               undefined,
               currentTache.id,
             );
+
+            // Mention notification
+            if (
+              mentionTag &&
+              c.contenu.toLowerCase().includes(mentionTag) &&
+              (c.auteur_id ?? c.auteur?.id) !== user?.id
+            ) {
+              const mentionCorps = `Dans la tâche "${currentTache.titre}"`;
+              createNotification(db, {
+                ref_id: `mention_commentaire_${c.id}`,
+                type: 'mention',
+                titre: 'Vous avez été mentionné',
+                corps: mentionCorps,
+                entity_type: 'tache',
+                entity_id: currentTache.id,
+              }).then(() =>
+                sendLocalNotification('Vous avez été mentionné', mentionCorps, {
+                  entity_type: 'tache',
+                  entity_id: currentTache.id,
+                }),
+              ).catch(() => {});
+            }
           }
         }
       }
@@ -173,7 +223,7 @@ export default function TacheDetailScreen() {
     }
     const rows = await getCommentairesByTache(db, Number(id));
     setCommentaires(rows);
-  }, [db, team, id]);
+  }, [db, team, id, user?.id]);
 
   useEffect(() => {
     if (tache && !editMode) {
@@ -188,6 +238,123 @@ export default function TacheDetailScreen() {
 
   const selectedProjet = projets.find((p) => p.id === selectedProjetId);
   const selectedAssigne = membres.find((m) => m.id === assigneId);
+
+  // ─── Liaisons ────────────────────────────────────────────────────────────
+
+  const loadLiaisons = useCallback(async () => {
+    if (!tache) return;
+    const rows = await getLiaisonsByTache(db, tache.id);
+    setLiaisons(rows);
+  }, [db, tache]);
+
+  useEffect(() => { if (tache) loadLiaisons(); }, [tache]);
+
+  const navigateToLinked = useCallback((item: LinkedItem) => {
+    if (item.type === 'note') {
+      router.push(`/(app)/note/${item.id}` as any);
+    } else {
+      router.push(`/(app)/tache/${item.id}` as any);
+    }
+  }, [router]);
+
+  const handleDeleteLiaison = useCallback((item: LinkedItem) => {
+    Alert.alert('Supprimer la liaison', `Retirer le lien vers "${item.titre}" ?`, [
+      { text: 'Annuler', style: 'cancel' },
+      {
+        text: 'Supprimer', style: 'destructive',
+        onPress: async () => {
+          if (item.liaison_server_id) {
+            api.delete(`/liaisons/${item.liaison_server_id}`).catch(() => {});
+          }
+          await deleteLiaison(db, item.liaison_id);
+          await loadLiaisons();
+        },
+      },
+    ]);
+  }, [db, loadLiaisons]);
+
+  const handleOpenLiaisonModal = useCallback(() => {
+    setModalStep('projet');
+    setModalProjetId(null);
+    setModalType('note');
+    setModalItems([]);
+    setModalSearch('');
+    setSelectedIds(new Set());
+    setShowLiaisonModal(true);
+  }, []);
+
+  const handleModalBack = useCallback(() => {
+    if (modalStep === 'items') {
+      setModalStep('type');
+      setModalItems([]);
+      setModalSearch('');
+      setSelectedIds(new Set());
+    } else if (modalStep === 'type') {
+      setModalStep('projet');
+      setModalProjetId(null);
+    }
+  }, [modalStep]);
+
+  const loadModalItems = useCallback(async (type: 'note' | 'tache', projetId: number) => {
+    setIsLoadingModalItems(true);
+    const alreadyLinkedIds = liaisons.filter((l) => l.type === type).map((l) => l.id);
+    try {
+      if (type === 'note') {
+        const rows = await db.getAllAsync<{ id: number; titre: string; statut: string }>(
+          'SELECT id, titre, statut FROM notes WHERE projet_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC',
+          projetId,
+        );
+        setModalItems(rows.filter((r) => !alreadyLinkedIds.includes(r.id)));
+      } else {
+        const rows = await db.getAllAsync<{ id: number; titre: string; statut: string }>(
+          'SELECT id, titre, statut FROM taches WHERE projet_id = ? AND deleted_at IS NULL ORDER BY created_at DESC',
+          projetId,
+        );
+        setModalItems(rows.filter((r) => r.id !== tache?.id && !alreadyLinkedIds.includes(r.id)));
+      }
+    } finally {
+      setIsLoadingModalItems(false);
+    }
+  }, [db, tache, liaisons]);
+
+  const toggleSelected = useCallback((id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleConfirmLiaisons = useCallback(async () => {
+    if (!tache || !team || selectedIds.size === 0) return;
+    setIsAddingLiaisons(true);
+    try {
+      const teamRow = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM teams WHERE server_id = ?', team.id,
+      );
+      if (!teamRow) return;
+      for (const targetId of selectedIds) {
+        const liaison = await createLiaison(db, {
+          source_type: 'tache',
+          source_id: tache.id,
+          target_type: modalType,
+          target_id: targetId,
+          team_id: teamRow.id,
+        });
+        pushLiaison(db, liaison.id, team.id);
+      }
+      setShowLiaisonModal(false);
+      await loadLiaisons();
+    } finally {
+      setIsAddingLiaisons(false);
+    }
+  }, [tache, team, db, selectedIds, modalType, loadLiaisons]);
+
+  const filteredModalItems = useMemo(() => {
+    const q = modalSearch.toLowerCase().trim();
+    if (!q) return modalItems;
+    return modalItems.filter((item) => item.titre.toLowerCase().includes(q));
+  }, [modalItems, modalSearch]);
 
   // ─── Date picker ────────────────────────────────────────────────────────────
 
@@ -280,6 +447,34 @@ export default function TacheDetailScreen() {
     }
     setEditMode(false);
   }, [tache]);
+
+  const filteredMentions = useMemo(() => {
+    if (mentionQuery === null) return [];
+    const q = mentionQuery.toLowerCase();
+    return membres.filter((m) => membreLabel(m).toLowerCase().includes(q));
+  }, [membres, mentionQuery]);
+
+  const handleCommentChange = useCallback((text: string) => {
+    setCommentInput(text);
+    const lastAt = text.lastIndexOf('@');
+    if (lastAt >= 0) {
+      const afterAt = text.slice(lastAt + 1);
+      if (!afterAt.includes(' ') && !afterAt.includes('\n')) {
+        setMentionQuery(afterAt);
+        setMentionStart(lastAt);
+        return;
+      }
+    }
+    setMentionQuery(null);
+  }, []);
+
+  const selectMention = useCallback((membre: Membre) => {
+    const label = membreLabel(membre);
+    const before = commentInput.slice(0, mentionStart);
+    const after = commentInput.slice(mentionStart + 1 + (mentionQuery?.length ?? 0));
+    setCommentInput(`${before}@${label} ${after}`);
+    setMentionQuery(null);
+  }, [commentInput, mentionStart, mentionQuery]);
 
   const handleSendComment = useCallback(async () => {
     const text = commentInput.trim();
@@ -682,6 +877,53 @@ export default function TacheDetailScreen() {
             </>
           ) : null}
 
+          {/* ── Liaisons ──────────────────────────────────────────────── */}
+          <View style={styles.liaisonSection}>
+            <View style={styles.liaisonSectionHeader}>
+              <Ionicons name="link-outline" size={14} color={Colors.textSecondary} />
+              <Text style={styles.liaisonSectionTitle}>
+                Liaisons{liaisons.length > 0 ? ` (${liaisons.length})` : ''}
+              </Text>
+              <Pressable onPress={handleOpenLiaisonModal} hitSlop={8}>
+                <Ionicons name="add-circle-outline" size={20} color={Colors.primary} />
+              </Pressable>
+            </View>
+
+            {liaisons.length === 0 && (
+              <Text style={styles.noLiaisons}>Aucune liaison.</Text>
+            )}
+
+            {liaisons.map((item) => (
+              <Pressable
+                key={item.liaison_id}
+                onPress={() => navigateToLinked(item)}
+                onLongPress={() => handleDeleteLiaison(item)}
+                style={styles.liaisonItem}
+              >
+                <View style={[
+                  styles.liaisonTypeBadge,
+                  { backgroundColor: item.type === 'note' ? Colors.info + '20' : Colors.en_cours + '20' },
+                ]}>
+                  <Ionicons
+                    name={item.type === 'note' ? 'document-text-outline' : 'checkmark-circle-outline'}
+                    size={11}
+                    color={item.type === 'note' ? Colors.info : Colors.en_cours}
+                  />
+                  <Text style={[styles.liaisonTypeText, { color: item.type === 'note' ? Colors.info : Colors.en_cours }]}>
+                    {item.type === 'note' ? 'Note' : 'Tâche'}
+                  </Text>
+                </View>
+                <View style={styles.liaisonItemBody}>
+                  <Text style={styles.liaisonItemTitle} numberOfLines={1}>{item.titre}</Text>
+                  {item.projet_titre && (
+                    <Text style={styles.liaisonItemProjet} numberOfLines={1}>{item.projet_titre}</Text>
+                  )}
+                </View>
+                <Ionicons name="chevron-forward" size={14} color={Colors.textDisabled} />
+              </Pressable>
+            ))}
+          </View>
+
           {/* ── Commentaires ──────────────────────────────────────────────── */}
           <View style={styles.commentSection}>
             <View style={styles.commentSectionHeader}>
@@ -716,14 +958,34 @@ export default function TacheDetailScreen() {
           </View>
         </ScrollView>
 
+        {/* Mention picker */}
+        {mentionQuery !== null && filteredMentions.length > 0 && (
+          <View style={styles.mentionPicker}>
+            <ScrollView
+              keyboardShouldPersistTaps="always"
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={false}
+            >
+              {filteredMentions.map((m) => (
+                <Pressable key={m.id} onPress={() => selectMention(m)} style={styles.mentionOption}>
+                  <View style={styles.mentionAvatar}>
+                    <Text style={styles.mentionAvatarText}>{membreLabel(m).charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <Text style={styles.mentionName}>{membreLabel(m)}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
         {/* Barre de saisie fixe */}
         <View style={styles.commentInputBar}>
           <TextInput
             style={styles.commentTextInput}
-            placeholder="Ajouter un commentaire…"
+            placeholder="Ajouter un commentaire… (@nom pour mentionner)"
             placeholderTextColor={Colors.textDisabled}
             value={commentInput}
-            onChangeText={setCommentInput}
+            onChangeText={handleCommentChange}
             multiline
             maxLength={1000}
           />
@@ -741,6 +1003,137 @@ export default function TacheDetailScreen() {
       </KeyboardAvoidingView>
 
       {pickerModals}
+
+      {/* ── Modal Liaisons ──────────────────────────────────────────── */}
+      <Modal visible={showLiaisonModal} transparent animationType="slide">
+        <Pressable style={styles.modalOverlay} onPress={() => setShowLiaisonModal(false)} />
+        <View style={[styles.modalSheet, styles.liaisonModalSheet]}>
+          <View style={styles.modalHandle} />
+
+          {/* Header */}
+          <View style={styles.liaisonModalHeaderRow}>
+            {modalStep !== 'projet' && (
+              <Pressable onPress={handleModalBack} style={styles.headerBtn}>
+                <Ionicons name="arrow-back" size={20} color={Colors.textPrimary} />
+              </Pressable>
+            )}
+            <Text style={[styles.modalTitle, { flex: 1 }]}>
+              {modalStep === 'projet' ? 'Choisir un projet'
+                : modalStep === 'type' ? 'Type d\'élément'
+                : modalType === 'note' ? 'Sélectionner des notes' : 'Sélectionner des tâches'}
+            </Text>
+          </View>
+
+          {/* Step 1 — Projet */}
+          {modalStep === 'projet' && (
+            <FlatList
+              data={projets}
+              keyExtractor={(p) => String(p.id)}
+              renderItem={({ item }) => (
+                <Pressable
+                  onPress={() => { setModalProjetId(item.id); setModalStep('type'); }}
+                  style={styles.pickerOption}
+                >
+                  <View style={[styles.pickerOptionDot, { backgroundColor: item.couleur }]} />
+                  <Text style={styles.pickerOptionText}>{item.titre}</Text>
+                  <Ionicons name="chevron-forward" size={16} color={Colors.textDisabled} />
+                </Pressable>
+              )}
+            />
+          )}
+
+          {/* Step 2 — Type */}
+          {modalStep === 'type' && (
+            <View style={styles.typeStep}>
+              {(['note', 'tache'] as const).map((t) => (
+                <Pressable
+                  key={t}
+                  onPress={() => {
+                    setModalType(t);
+                    if (modalProjetId !== null) loadModalItems(t, modalProjetId);
+                    setModalStep('items');
+                  }}
+                  style={styles.typeOption}
+                >
+                  <Ionicons
+                    name={t === 'note' ? 'document-text-outline' : 'checkmark-circle-outline'}
+                    size={32}
+                    color={Colors.primary}
+                  />
+                  <Text style={styles.typeOptionLabel}>{t === 'note' ? 'Notes' : 'Tâches'}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          {/* Step 3 — Items */}
+          {modalStep === 'items' && (
+            <>
+              <View style={styles.modalSearchRow}>
+                <Ionicons name="search-outline" size={16} color={Colors.textSecondary} />
+                <TextInput
+                  style={styles.modalSearchInput}
+                  placeholder="Rechercher…"
+                  placeholderTextColor={Colors.textDisabled}
+                  value={modalSearch}
+                  onChangeText={setModalSearch}
+                  autoFocus
+                />
+                {modalSearch.length > 0 && (
+                  <Pressable onPress={() => setModalSearch('')} hitSlop={8}>
+                    <Ionicons name="close-circle" size={16} color={Colors.textDisabled} />
+                  </Pressable>
+                )}
+              </View>
+
+              {isLoadingModalItems ? (
+                <View style={styles.center}><ActivityIndicator color={Colors.primary} /></View>
+              ) : filteredModalItems.length === 0 ? (
+                <View style={styles.center}>
+                  <Text style={styles.noLiaisons}>Aucun élément disponible.</Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={filteredModalItems}
+                  keyExtractor={(item) => String(item.id)}
+                  renderItem={({ item }) => {
+                    const isSelected = selectedIds.has(item.id);
+                    return (
+                      <Pressable
+                        onPress={() => toggleSelected(item.id)}
+                        style={[styles.pickerOption, isSelected && styles.pickerOptionSelected]}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.pickerOptionText}>{item.titre}</Text>
+                        </View>
+                        {isSelected
+                          ? <Ionicons name="checkmark-circle" size={22} color={Colors.primary} />
+                          : <View style={styles.uncheckedCircle} />
+                        }
+                      </Pressable>
+                    );
+                  }}
+                />
+              )}
+
+              <Pressable
+                onPress={handleConfirmLiaisons}
+                disabled={selectedIds.size === 0 || isAddingLiaisons}
+                style={[styles.confirmBtn, (selectedIds.size === 0 || isAddingLiaisons) && styles.saveBtnDisabled]}
+              >
+                {isAddingLiaisons
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={styles.confirmBtnText}>
+                      Lier {selectedIds.size > 0
+                        ? `${selectedIds.size} élément${selectedIds.size > 1 ? 's' : ''}`
+                        : 'les éléments sélectionnés'}
+                    </Text>
+                }
+              </Pressable>
+            </>
+          )}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -923,6 +1316,84 @@ const styles = StyleSheet.create({
   pickerOptionSelected: { backgroundColor: Colors.surfaceAlt },
   pickerOptionDot: { width: 12, height: 12, borderRadius: 6 },
   pickerOptionText: { flex: 1, fontSize: 15, color: Colors.textPrimary },
+
+  // Liaisons section
+  liaisonSection: { marginTop: 24, marginBottom: 8 },
+  liaisonSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  liaisonSectionTitle: {
+    fontSize: 11, fontWeight: '600', color: Colors.textSecondary,
+    textTransform: 'uppercase', letterSpacing: 0.5, flex: 1,
+  },
+  noLiaisons: { fontSize: 14, color: Colors.textDisabled, fontStyle: 'italic', paddingVertical: 4 },
+  liaisonItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 10, paddingHorizontal: 12,
+    backgroundColor: Colors.surface, borderRadius: 10,
+    borderWidth: 1, borderColor: Colors.borderLight, marginBottom: 6,
+  },
+  liaisonTypeBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6,
+  },
+  liaisonTypeText: { fontSize: 10, fontWeight: '600' },
+  liaisonItemBody: { flex: 1 },
+  liaisonItemTitle: { fontSize: 14, fontWeight: '500', color: Colors.textPrimary },
+  liaisonItemProjet: { fontSize: 11, color: Colors.textSecondary, marginTop: 1 },
+
+  // Liaison modal
+  liaisonModalSheet: { maxHeight: '75%' },
+  liaisonModalHeaderRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: Layout.screenPaddingH, paddingBottom: 8, gap: 8,
+  },
+  typeStep: {
+    flexDirection: 'row', gap: 16,
+    paddingHorizontal: Layout.screenPaddingH, paddingVertical: 24,
+    justifyContent: 'center',
+  },
+  typeOption: {
+    flex: 1, alignItems: 'center', gap: 10, padding: 20,
+    borderRadius: 14, backgroundColor: Colors.surfaceAlt,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  typeOptionLabel: { fontSize: 15, fontWeight: '600', color: Colors.textPrimary },
+  modalSearchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginHorizontal: Layout.screenPaddingH, marginBottom: 8,
+    backgroundColor: Colors.surfaceAlt, borderRadius: 10,
+    borderWidth: 1, borderColor: Colors.border,
+    paddingHorizontal: 12, paddingVertical: 8,
+  },
+  modalSearchInput: { flex: 1, fontSize: 14, color: Colors.textPrimary },
+  uncheckedCircle: {
+    width: 22, height: 22, borderRadius: 11,
+    borderWidth: 2, borderColor: Colors.border,
+  },
+  confirmBtn: {
+    marginHorizontal: Layout.screenPaddingH, marginTop: 8,
+    paddingVertical: 14, borderRadius: 12,
+    backgroundColor: Colors.primary, alignItems: 'center',
+  },
+  confirmBtnText: { fontSize: 15, fontWeight: '600', color: '#fff' },
+
+  // Mention picker
+  mentionPicker: {
+    backgroundColor: Colors.surface,
+    borderTopWidth: 1, borderTopColor: Colors.border,
+    maxHeight: 160,
+  },
+  mentionOption: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: Layout.screenPaddingH, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: Colors.borderLight,
+  },
+  mentionAvatar: {
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: Colors.primary + '20',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  mentionAvatarText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
+  mentionName: { fontSize: 14, color: Colors.textPrimary, fontWeight: '500' },
 
   // Comments
   commentSection: { marginTop: 24 },

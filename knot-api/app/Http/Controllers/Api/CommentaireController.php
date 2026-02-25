@@ -31,11 +31,12 @@ class CommentaireController extends BaseApiController
     protected function getValidationRules(?int $id = null): array
     {
         return [
-            'contenu' => 'required|string',
-            'type' => 'required|in:texte,audio',
-            'note_id' => 'required|integer|exists:notes,id',
+            'contenu'   => 'required|string',
+            'type'      => 'required|in:texte,audio',
+            'note_id'   => 'nullable|integer|exists:notes,id',
+            'tache_id'  => 'nullable|integer|exists:taches,id',
             'auteur_id' => 'required|integer|exists:users,id',
-            'team_id' => 'required|integer|exists:teams,id',
+            'team_id'   => 'required|integer|exists:teams,id',
         ];
     }
 
@@ -46,41 +47,45 @@ class CommentaireController extends BaseApiController
     {
         $query = parent::buildQuery($request);
 
-        // Filtrage par team si fourni dans la requête
-        if ($request->has('team_id')) {
-            $query->where('team_id', $request->team_id);
-        }
-
-        // Filtrage par note si fourni
-        if ($request->has('note_id')) {
-            $query->where('note_id', $request->note_id);
+        if ($request->has('tache_id')) {
+            $query->where('tache_id', $request->tache_id);
         }
 
         return $query;
     }
 
     /**
-     * Méthode pour récupérer tous les commentaires d'une note
+     * Récupérer tous les commentaires d'une note
      */
     public function getByNote(Request $request, int $noteId)
     {
-        // Ajouter le filtre de note à la requête
         $request->merge(['note_id' => $noteId]);
+        return $this->index($request);
+    }
 
-        // Utiliser la méthode index standard
+    /**
+     * Récupérer tous les commentaires d'une tâche
+     */
+    public function getByTache(Request $request, int $tacheId)
+    {
+        $request->merge(['tache_id' => $tacheId]);
         return $this->index($request);
     }
 
     /**
      * Override de la méthode store pour ajouter la génération du sync_id
+     * et valider qu'un commentaire est lié à une note OU une tâche.
      */
     public function store(Request $request): \Illuminate\Http\JsonResponse
     {
-        // Ajouter un sync_id unique s'il n'est pas fourni
+        if (!$request->note_id && !$request->tache_id) {
+            return $this->errorResponse('Un commentaire doit être associé à une note ou une tâche.', 422);
+        }
+
         if (!$request->has('sync_id')) {
             $request->merge([
-                'sync_id' => Str::uuid(),
-                'sync_status' => 'synced'
+                'sync_id'     => Str::uuid(),
+                'sync_status' => 'synced',
             ]);
         }
 

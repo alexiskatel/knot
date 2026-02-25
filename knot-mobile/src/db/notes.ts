@@ -21,6 +21,7 @@ export interface Note {
   projet_couleur?: string;
   auteur_nom?: string;
   auteur_prenom?: string;
+  commentaire_count?: number;
 }
 
 export async function getNotesByTeam(
@@ -30,14 +31,16 @@ export async function getNotesByTeam(
 ): Promise<Note[]> {
   const sql = projetId
     ? `SELECT n.*, p.titre as projet_titre, p.couleur as projet_couleur,
-              u.nom as auteur_nom, u.prenom as auteur_prenom
+              u.nom as auteur_nom, u.prenom as auteur_prenom,
+              (SELECT COUNT(*) FROM commentaires WHERE note_id = n.id) as commentaire_count
        FROM notes n
        LEFT JOIN projets p ON p.id = n.projet_id
        LEFT JOIN users u ON u.id = n.auteur_id
        WHERE n.team_id = ? AND n.projet_id = ? AND n.statut != 'archive' AND n.deleted_at IS NULL
        ORDER BY n.updated_at DESC`
     : `SELECT n.*, p.titre as projet_titre, p.couleur as projet_couleur,
-              u.nom as auteur_nom, u.prenom as auteur_prenom
+              u.nom as auteur_nom, u.prenom as auteur_prenom,
+              (SELECT COUNT(*) FROM commentaires WHERE note_id = n.id) as commentaire_count
        FROM notes n
        LEFT JOIN projets p ON p.id = n.projet_id
        LEFT JOIN users u ON u.id = n.auteur_id

@@ -144,6 +144,7 @@ class AuthController extends BaseApiController
                     'prenom' => $user->prenom,
                     'email' => $user->email,
                     'telephone' => $user->telephone,
+                    'is_admin' => (bool) $user->is_admin,
                 ],
                 'team' => [
                     'id' => $team->id,

@@ -1,6 +1,6 @@
 import { type SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 4;
+const DATABASE_VERSION = 6;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
   const result = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
@@ -170,5 +170,46 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
       try { await db.runAsync(`ALTER TABLE ${table} ADD COLUMN ${col}`); } catch {}
     }
     await db.runAsync('PRAGMA user_version = 4');
+  }
+
+  if (currentVersion < 5) {
+    await db.withTransactionAsync(async () => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS liaisons (
+          id          INTEGER PRIMARY KEY NOT NULL,
+          server_id   INTEGER,
+          sync_id     TEXT NOT NULL UNIQUE,
+          source_type TEXT NOT NULL,
+          source_id   INTEGER NOT NULL,
+          target_type TEXT NOT NULL,
+          target_id   INTEGER NOT NULL,
+          team_id     INTEGER NOT NULL REFERENCES teams(id),
+          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          sync_status TEXT NOT NULL DEFAULT 'synced',
+          UNIQUE(source_type, source_id, target_type, target_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_liaisons_source ON liaisons(source_type, source_id);
+        CREATE INDEX IF NOT EXISTS idx_liaisons_target ON liaisons(target_type, target_id);
+        PRAGMA user_version = 5;
+      `);
+    });
+  }
+
+  if (currentVersion < 6) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id          INTEGER PRIMARY KEY NOT NULL,
+        ref_id      TEXT UNIQUE,
+        type        TEXT NOT NULL,
+        titre       TEXT NOT NULL,
+        corps       TEXT,
+        entity_type TEXT,
+        entity_id   INTEGER,
+        is_read     INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(is_read);
+      PRAGMA user_version = 6;
+    `);
   }
 }

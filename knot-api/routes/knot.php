@@ -9,6 +9,8 @@ use App\Http\Controllers\Api\ReactionController;
 use App\Http\Controllers\Api\SyncController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\TacheController;
+use App\Http\Controllers\Api\TrashController;
+use App\Http\Controllers\Api\LiaisonController;
 
 // Routes sans authentification
 Route::post('/auth/validate-key', [AuthController::class, 'validateKey']);
@@ -59,7 +61,8 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/commentaires/{id}', [CommentaireController::class, 'show']);
     Route::put('/commentaires/{id}', [CommentaireController::class, 'update']);
     Route::delete('/commentaires/{id}', [CommentaireController::class, 'destroy']);
-    Route::get('/notes/{id}/commentaires', [CommentaireController::class, 'getByNote']);
+    Route::get('/notes/{id}/commentaires',  [CommentaireController::class, 'getByNote']);
+    Route::get('/taches/{id}/commentaires', [CommentaireController::class, 'getByTache']);
     Route::put('/commentaires/{id}/sync-status', [CommentaireController::class, 'updateSyncStatus']);
 
     // Routes Réactions
@@ -79,4 +82,15 @@ Route::middleware('auth.api')->group(function () {
     // Routes Authentification
     Route::post('/auth/generate-key', [AuthController::class, 'generateKey']);
     Route::post('/auth/revoke-key', [AuthController::class, 'revokeKey']);
+
+    // Routes Liaisons
+    Route::get('/notes/{id}/liaisons',  [LiaisonController::class, 'getByNote']);
+    Route::get('/taches/{id}/liaisons', [LiaisonController::class, 'getByTache']);
+    Route::get('/teams/{id}/liaisons',  [LiaisonController::class, 'getByTeam']);
+    Route::post('/liaisons',            [LiaisonController::class, 'store']);
+    Route::delete('/liaisons/{id}',     [LiaisonController::class, 'destroy']);
+
+    // Routes Admin — Corbeille
+    Route::get('/admin/trash', [TrashController::class, 'index']);
+    Route::post('/admin/trash/{type}/{id}/restore', [TrashController::class, 'restore']);
 });

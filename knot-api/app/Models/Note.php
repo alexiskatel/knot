@@ -7,10 +7,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Models\Liaison;
 
 class Note extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $table = 'notes';
 
@@ -22,13 +24,15 @@ class Note extends Model
         'auteur_id',
         'team_id',
         'sync_id',
-        'sync_status'
+        'sync_status',
+        'deleted_by'
     ];
 
     protected $casts = [
         'projet_id' => 'integer',
         'auteur_id' => 'integer',
-        'team_id' => 'integer'
+        'team_id'   => 'integer',
+        'deleted_by' => 'integer',
     ];
 
     /**
@@ -64,6 +68,14 @@ class Note extends Model
     }
 
     /**
+     * Récupère l'utilisateur qui a supprimé la note
+     */
+    public function deletedByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'deleted_by');
+    }
+
+    /**
      * Récupère les médias associés à la note
      */
     public function medias(): MorphMany
@@ -73,6 +85,7 @@ class Note extends Model
 
     /**
      * Génère un sync_id unique lors de la création du modèle
+     * et supprime les liaisons en cascade lors de la suppression
      */
     protected static function booted()
     {
@@ -80,6 +93,11 @@ class Note extends Model
             if (!$note->sync_id) {
                 $note->sync_id = (string) \Illuminate\Support\Str::uuid();
             }
+        });
+
+        static::deleting(function (Note $note) {
+            Liaison::where('source_type', 'note')->where('source_id', $note->id)->delete();
+            Liaison::where('target_type', 'note')->where('target_id', $note->id)->delete();
         });
     }
 }

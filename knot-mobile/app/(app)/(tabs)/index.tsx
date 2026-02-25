@@ -147,8 +147,21 @@ function NoteCard({ note, onPress }: { note: Note; onPress: () => void }) {
                   </Text>
                 </View>
               )}
+              {(note.auteur_prenom || note.auteur_nom) && (
+                <Text style={styles.cardAuteur} numberOfLines={1}>
+                 Par {note.auteur_prenom ? `${note.auteur_prenom} ${note.auteur_nom}` : note.auteur_nom}
+                </Text>
+              )}
             </View>
-            <Text style={styles.cardDate}>{date}</Text>
+            <View style={styles.cardMetaRight}>
+              {(note.commentaire_count ?? 0) > 0 && (
+                <View style={styles.commentBadge}>
+                  <Ionicons name="chatbubble-outline" size={10} color={Colors.textDisabled} />
+                  <Text style={styles.commentBadgeText}>{note.commentaire_count}</Text>
+                </View>
+              )}
+              <Text style={styles.cardDate}>{date}</Text>
+            </View>
           </View>
         </View>
       </Pressable>
@@ -467,6 +480,25 @@ const styles = StyleSheet.create({
   projetTagText: {
     fontSize: 11,
     fontWeight: '600',
+  },
+  cardMetaRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cardAuteur: {
+    fontSize: 10,
+    color: Colors.textDisabled,
+    maxWidth: 80,
+  },
+  commentBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  commentBadgeText: {
+    fontSize: 10,
+    color: Colors.textDisabled,
   },
   cardDate: {
     fontSize: 11,

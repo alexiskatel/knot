@@ -20,6 +20,8 @@ import { Layout } from '@/src/constants/layout';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { useSync } from '@/src/contexts/SyncContext';
 import { migrateDbIfNeeded } from '@/src/db/migrations';
+import { sendLocalNotification } from '@/src/services/pushNotifications';
+import { createNotification } from '@/src/db/notifications';
 
 // ─── Section item ─────────────────────────────────────────────────────────────
 
@@ -65,7 +67,7 @@ function SectionHeader({ title }: { title: string }) {
 export default function SettingsScreen() {
   const db = useSQLiteContext();
   const { user, team, signOut } = useAuth();
-  const { isSyncing, lastSyncAt, sync } = useSync();
+  const { isSyncing, lastSyncAt, sync, bumpSyncVersion } = useSync();
   const [showApiKey, setShowApiKey] = useState(false);
   const [isSyncingManual, setIsSyncingManual] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
@@ -213,6 +215,34 @@ export default function SettingsScreen() {
             icon="information-circle-outline"
             label="Version"
             value="1.0.0"
+          />
+        </View>
+
+        {/* Test notifications */}
+        <SectionHeader title="Tests" />
+        <View style={styles.section}>
+          <SettingRow
+            icon="notifications-outline"
+            label="Tester les notifications"
+            onPress={async () => {
+              try {
+                await createNotification(db, {
+                  ref_id: `test_${Date.now()}`,
+                  type: 'assignment',
+                  titre: 'Test notification',
+                  corps: 'Ceci est une notification de test. La carte s\'affiche correctement !',
+                  entity_type: undefined,
+                  entity_id: undefined,
+                });
+                bumpSyncVersion();
+                await sendLocalNotification(
+                  'Test notification',
+                  'Ceci est une notification de test !',
+                );
+              } catch {
+                Alert.alert('Erreur', 'Impossible d\'envoyer la notification. Vérifiez les permissions.');
+              }
+            }}
           />
         </View>
 
