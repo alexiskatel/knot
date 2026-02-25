@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
+  TextInput,
   StyleSheet,
   FlatList,
   ScrollView,
@@ -118,11 +119,11 @@ function TacheCard({ tache, onPress }: { tache: Tache; onPress: () => void }) {
     : tache.assigne_nom ?? null;
 
   const dueDateStr = tache.due_date
-    ? new Date(tache.due_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
+    ? new Date(normDate(tache.due_date)).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
     : null;
 
   const now = Date.now();
-  const dueMs = tache.due_date ? new Date(tache.due_date).getTime() : null;
+  const dueMs = tache.due_date ? new Date(normDate(tache.due_date)).getTime() : null;
   const isOverdue = dueMs !== null && tache.statut !== 'done' && dueMs < now;
   const daysLeft = dueMs !== null && tache.statut !== 'done' && !isOverdue
     ? Math.ceil((dueMs - now) / (24 * 60 * 60 * 1000))
@@ -221,6 +222,17 @@ function EmptyTaches({ hasFilter }: { hasFilter: boolean }) {
   );
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function normDate(s: string) {
+  // SQLite renvoie "YYYY-MM-DD HH:MM:SS" UTC sans Z → corriger avant new Date()
+  return s.includes('T') ? s : s.replace(' ', 'T') + 'Z';
+}
+
+function isOverdueFn(t: Tache, now: number): boolean {
+  return !!t.due_date && t.statut !== 'done' && new Date(normDate(t.due_date)).getTime() < now;
+}
+
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function TachesScreen() {
@@ -234,7 +246,9 @@ export default function TachesScreen() {
   const [selectedMembreId, setSelectedMembreId] = useState<number | null>(null);
   const [membres, setMembres] = useState<Membre[]>([]);
   const [showMembrePicker, setShowMembrePicker] = useState(false);
-  const { taches, isLoading, refresh } = useTaches(selectedProjet?.id);
+  const [searchQuery, setSearchQuery] = useState('');
+  // Toujours charger toutes les taches — le filtrage projet se fait côté client
+  const { taches: allTaches, isLoading, refresh } = useTaches();
   const [refreshing, setRefreshing] = useState(false);
 
   // Chargement des membres de l'équipe
@@ -261,26 +275,55 @@ export default function TachesScreen() {
     setRefreshing(false);
   }, [sync, refresh]);
 
+  const now = Date.now();
+
+  // Taches filtrées par membre uniquement → base pour les counts des cartes projet
+  const membreFiltered = selectedMembreId !== null
+    ? allTaches.filter((t) => t.assigne_id === selectedMembreId)
+    : allTaches;
+
+  // Taches filtrées par projet + membre → base pour les counts des filtres statut
+  const projectFiltered = selectedProjet !== null
+    ? membreFiltered.filter((t) => t.projet_id === selectedProjet.id)
+    : membreFiltered;
+
+  // Liste finale : projet + membre + statut + recherche
   const filtered = (() => {
-    let result = taches;
-    // Filtre membre
-    if (selectedMembreId !== null) {
-      result = result.filter((t) => t.assigne_id === selectedMembreId);
-    }
-    // Filtre statut
+    let result = projectFiltered;
     if (selectedStatut === 'overdue') {
-      const now = Date.now();
-      return result.filter((t) => t.due_date && t.statut !== 'done' && new Date(t.due_date).getTime() < now);
-    }
-    if (selectedStatut !== 'all') {
+      result = result.filter((t) => isOverdueFn(t, now));
+    } else if (selectedStatut !== 'all') {
       result = result.filter((t) => t.statut === selectedStatut);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      result = result.filter(
+        (t) =>
+          t.titre.toLowerCase().includes(q) ||
+          (t.description ?? '').toLowerCase().includes(q),
+      );
     }
     return result;
   })();
 
-  const overdueCount = taches.filter(
-    (t) => t.due_date && t.statut !== 'done' && new Date(t.due_date).getTime() < Date.now(),
-  ).length;
+  // Counts des filtres statut (projet + membre, sans filtre statut)
+  const statutCounts: Record<StatutFilter, number> = {
+    all:      projectFiltered.length,
+    todo:     projectFiltered.filter((t) => t.statut === 'todo').length,
+    en_cours: projectFiltered.filter((t) => t.statut === 'en_cours').length,
+    done:     projectFiltered.filter((t) => t.statut === 'done').length,
+    overdue:  projectFiltered.filter((t) => isOverdueFn(t, now)).length,
+  };
+
+  // Count pour une carte projet : membre + statut filtrés, pas le projet sélectionné
+  function getProjetCount(projetId: number | null): number {
+    const base = projetId !== null
+      ? membreFiltered.filter((t) => t.projet_id === projetId)
+      : membreFiltered;
+    if (selectedStatut === 'overdue') return base.filter((t) => isOverdueFn(t, now)).length;
+    if (selectedStatut !== 'all')    return base.filter((t) => t.statut === selectedStatut).length;
+    return base.length;
+  }
 
   const hasFilter = selectedProjet !== null || selectedStatut !== 'all' || selectedMembreId !== null;
 
@@ -296,7 +339,7 @@ export default function TachesScreen() {
           style={[styles.statutFilter, selectedStatut === 'all' && styles.statutFilterActive]}
         >
           <Text style={[styles.statutFilterText, selectedStatut === 'all' && styles.statutFilterTextActive]}>
-            Toutes
+            Toutes {statutCounts.all > 0 ? `(${statutCounts.all})` : ''}
           </Text>
         </Pressable>
         {STATUTS.map((s) => (
@@ -310,7 +353,7 @@ export default function TachesScreen() {
           >
             <View style={[styles.statutDot, { backgroundColor: s.color }]} />
             <Text style={[styles.statutFilterText, selectedStatut === s.key && { color: s.color }]}>
-              {s.label}
+              {s.label}{statutCounts[s.key] > 0 ? ` (${statutCounts[s.key]})` : ''}
             </Text>
           </Pressable>
         ))}
@@ -327,37 +370,56 @@ export default function TachesScreen() {
             color={selectedStatut === 'overdue' ? Colors.error : Colors.textSecondary}
           />
           <Text style={[styles.statutFilterText, selectedStatut === 'overdue' && { color: Colors.error }]}>
-            En retard{overdueCount > 0 ? ` (${overdueCount})` : ''}
+            En retard{statutCounts.overdue > 0 ? ` (${statutCounts.overdue})` : ''}
           </Text>
         </Pressable>
       </View>
 
-      {/* Filtre membre — dropdown */}
-      {membres.length > 0 && (
-        <View style={styles.membreFilterRow}>
-          <Pressable
-            onPress={() => setShowMembrePicker(true)}
-            style={[styles.membreDropdown, selectedMembreId !== null && styles.membreDropdownActive]}
-          >
-            <Ionicons
-              name="person-outline"
-              size={14}
-              color={selectedMembreId !== null ? Colors.primary : Colors.textSecondary}
-            />
-            <Text style={[styles.membreDropdownText, selectedMembreId !== null && styles.membreDropdownTextActive]}>
-              {selectedMembreId !== null
-                ? membreLabel(membres.find((m) => m.id === selectedMembreId)!)
-                : 'Assigné à : '}
-            </Text>
-            <Ionicons name="chevron-down" size={13} color={selectedMembreId !== null ? Colors.primary : Colors.textSecondary} />
-          </Pressable>
-          {selectedMembreId !== null && (
-            <Pressable onPress={() => setSelectedMembreId(null)} style={styles.membreClearBtn} hitSlop={8}>
-              <Ionicons name="close-circle" size={16} color={Colors.textDisabled} />
+      {/* Filtre membre + recherche — même ligne */}
+      <View style={styles.membreFilterRow}>
+        {membres.length > 0 && (
+          <>
+            <Pressable
+              onPress={() => setShowMembrePicker(true)}
+              style={[styles.membreDropdown, selectedMembreId !== null && styles.membreDropdownActive]}
+            >
+              <Ionicons
+                name="person-outline"
+                size={14}
+                color={selectedMembreId !== null ? Colors.primary : Colors.textSecondary}
+              />
+              <Text style={[styles.membreDropdownText, selectedMembreId !== null && styles.membreDropdownTextActive]} numberOfLines={1}>
+                {selectedMembreId !== null
+                  ? membreLabel(membres.find((m) => m.id === selectedMembreId)!)
+                  : 'Assigné à'}
+              </Text>
+              <Ionicons name="chevron-down" size={13} color={selectedMembreId !== null ? Colors.primary : Colors.textSecondary} />
+            </Pressable>
+            {selectedMembreId !== null && (
+              <Pressable onPress={() => setSelectedMembreId(null)} style={styles.membreClearBtn} hitSlop={8}>
+                <Ionicons name="close-circle" size={16} color={Colors.textDisabled} />
+              </Pressable>
+            )}
+          </>
+        )}
+        <View style={styles.searchBox}>
+          <Ionicons name="search-outline" size={14} color={Colors.textDisabled} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Rechercher…"
+            placeholderTextColor={Colors.textDisabled}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            returnKeyType="search"
+            clearButtonMode="while-editing"
+          />
+          {searchQuery.length > 0 && (
+            <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
+              <Ionicons name="close-circle" size={15} color={Colors.textDisabled} />
             </Pressable>
           )}
         </View>
-      )}
+      </View>
 
       {/* Modal picker membre */}
       <Modal visible={showMembrePicker} transparent animationType="slide">
@@ -406,7 +468,7 @@ export default function TachesScreen() {
             <ProjetFilterCard
               projet={null}
               selected={selectedProjet === null}
-              count={taches.length}
+              count={getProjetCount(null)}
               onPress={() => setSelectedProjet(null)}
             />
             {projets.map((p) => (
@@ -414,7 +476,7 @@ export default function TachesScreen() {
                 key={p.id}
                 projet={p}
                 selected={selectedProjet?.id === p.id}
-                count={taches.filter((t) => t.projet_id === p.id).length}
+                count={getProjetCount(p.id)}
                 onPress={() => setSelectedProjet((prev) => prev?.id === p.id ? null : p)}
               />
             ))}
@@ -456,7 +518,11 @@ export default function TachesScreen() {
       <Animated.View entering={FadeIn.delay(300)} style={styles.fab}>
         <Pressable
           style={styles.fabBtn}
-          onPress={() => router.push('/(app)/tache/create')}
+          onPress={() => router.push(
+            selectedProjet
+              ? { pathname: '/(app)/tache/create', params: { projetId: String(selectedProjet.id) } }
+              : '/(app)/tache/create'
+          )}
         >
           <Ionicons name="add" size={28} color="#fff" />
         </Pressable>
@@ -498,7 +564,7 @@ const styles = StyleSheet.create({
   statutFilterTextActive: { color: Colors.primary },
   statutDot: { width: 6, height: 6, borderRadius: 3 },
 
-  // Membre filter dropdown
+  // Membre filter + search row
   membreFilterRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -507,24 +573,42 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   membreDropdown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    maxWidth: 140,
+  },
+  membreDropdownActive: {
+    backgroundColor: Colors.primary + '0E',
+    borderColor: Colors.primary,
+  },
+  membreDropdownText: { fontSize: 12, fontWeight: '500', color: Colors.textSecondary, flexShrink: 1 },
+  membreDropdownTextActive: { color: Colors.primary },
+  membreClearBtn: { padding: 2 },
+  searchBox: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 10,
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  membreDropdownActive: {
-    backgroundColor: Colors.primary + '0E',
-    borderColor: Colors.primary,
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.textPrimary,
+    padding: 0,
   },
-  membreDropdownText: { flex: 1, fontSize: 13, fontWeight: '500', color: Colors.textSecondary },
-  membreDropdownTextActive: { color: Colors.primary },
-  membreClearBtn: { padding: 2 },
 
   // Modal membre picker
   modalOverlay: { flex: 1, backgroundColor: Colors.overlay },

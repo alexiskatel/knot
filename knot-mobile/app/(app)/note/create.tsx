@@ -13,7 +13,7 @@ import {
   TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -26,6 +26,7 @@ import { Layout } from '@/src/constants/layout';
 
 export default function CreateNoteScreen() {
   const router = useRouter();
+  const { projetId: projetIdParam } = useLocalSearchParams<{ projetId?: string }>();
   const db = useSQLiteContext();
   const { user, team } = useAuth();
   const { projets } = useProjets();
@@ -39,7 +40,9 @@ export default function CreateNoteScreen() {
 
   useEffect(() => {
     if (projets.length > 0 && selectedProjetId === null) {
-      setSelectedProjetId(projets[0].id);
+      const paramId = projetIdParam ? Number(projetIdParam) : null;
+      const match = paramId ? projets.find((p) => p.id === paramId) : null;
+      setSelectedProjetId(match?.id ?? projets[0].id);
     }
   }, [projets]);
 

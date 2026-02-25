@@ -9,9 +9,11 @@ import {
   RefreshControl,
   ActivityIndicator,
   TextInput,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { useSQLiteContext } from 'expo-sqlite';
 import Animated, {
   FadeIn,
   FadeInDown,
@@ -30,8 +32,13 @@ import { useNotes } from '@/src/hooks/useNotes';
 import { AppHeader } from '@/src/components/shared/AppHeader';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
-import type { Note } from '@/src/db/notes';
+import { softDeleteNote, type Note } from '@/src/db/notes';
+import { api } from '@/src/api/client';
 import type { Projet } from '@/src/db/projets';
+
+function normDate(s: string) {
+  return s.includes('T') ? s : s.replace(' ', 'T') + 'Z';
+}
 
 // ─── Projet card (filtre horizontal) ───────────────────────────────────────
 
@@ -104,12 +111,24 @@ function ProjetCard({
 
 // ─── Note card ─────────────────────────────────────────────────────────────
 
-function NoteCard({ note, onPress }: { note: Note; onPress: () => void }) {
+function NoteCard({
+  note,
+  onPress,
+  onLongPress,
+  isSelecting,
+  isSelected,
+}: {
+  note: Note;
+  onPress: () => void;
+  onLongPress?: () => void;
+  isSelecting?: boolean;
+  isSelected?: boolean;
+}) {
   const scale = useSharedValue(1);
   const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
 
   const preview = note.contenu.replace(/\n/g, ' ').slice(0, 100);
-  const date = new Date(note.updated_at).toLocaleDateString('fr-FR', {
+  const date = new Date(normDate(note.updated_at)).toLocaleDateString('fr-FR', {
     day: 'numeric',
     month: 'short',
   });
@@ -119,9 +138,10 @@ function NoteCard({ note, onPress }: { note: Note; onPress: () => void }) {
     <Animated.View style={animStyle}>
       <Pressable
         onPress={onPress}
+        onLongPress={onLongPress}
         onPressIn={() => { scale.value = withSpring(0.98, { damping: 20, stiffness: 400 }); }}
         onPressOut={() => { scale.value = withSpring(1, { damping: 20, stiffness: 400 }); }}
-        style={styles.card}
+        style={[styles.card, isSelected && styles.cardSelected]}
       >
         {/* Project color bar */}
         <View style={[styles.cardBar, { backgroundColor: note.projet_couleur ?? Colors.primary }]} />
@@ -129,8 +149,14 @@ function NoteCard({ note, onPress }: { note: Note; onPress: () => void }) {
         <View style={styles.cardContent}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle} numberOfLines={1}>{note.titre}</Text>
-            {isPending && (
-              <Ionicons name="cloud-upload-outline" size={14} color={Colors.textDisabled} />
+            {isSelecting ? (
+              <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+                {isSelected && <Ionicons name="checkmark" size={12} color="#fff" />}
+              </View>
+            ) : (
+              isPending && (
+                <Ionicons name="cloud-upload-outline" size={14} color={Colors.textDisabled} />
+              )
             )}
           </View>
 
@@ -191,13 +217,19 @@ function EmptyNotes({ hasFilter }: { hasFilter: boolean }) {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const db = useSQLiteContext();
   const { projetId } = useLocalSearchParams<{ projetId?: string }>();
-  const { sync } = useSync();
+  const { sync, bumpSyncVersion } = useSync();
+  const { user } = useAuth();
   const { projets, isLoading: projetsLoading, refresh: refreshProjets } = useProjets();
   const [selectedProjet, setSelectedProjet] = useState<Projet | null>(null);
   const { notes, isLoading: notesLoading, refresh: refreshNotes } = useNotes(selectedProjet?.id);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
+
+  // Multi-select
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const isSelecting = selectedIds.size > 0;
 
   // Sélectionne le projet passé en paramètre dès que la liste est chargée
   useEffect(() => {
@@ -221,6 +253,58 @@ export default function HomeScreen() {
         return n.titre.toLowerCase().includes(q) || n.contenu.toLowerCase().includes(q);
       })
     : notes;
+
+  // ── Multi-select handlers ────────────────────────────────────────────────
+
+  const handleLongPress = useCallback((id: number) => {
+    setSelectedIds(new Set([id]));
+  }, []);
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const cancelSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const handleDeleteSelected = useCallback(() => {
+    const count = selectedIds.size;
+    Alert.alert(
+      `Supprimer ${count} note${count > 1 ? 's' : ''}`,
+      'Cette action est irréversible.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: async () => {
+            const localUser = user
+              ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', user.id)
+              : null;
+            const ids = Array.from(selectedIds);
+            for (const id of ids) {
+              const note = notes.find((n) => n.id === id);
+              if (!note) continue;
+              if (note.server_id) {
+                api.delete(`/notes/${note.server_id}`).catch((e) => {
+                  console.warn('[Delete] Note', note.server_id, 'échoué:', e);
+                });
+              }
+              await softDeleteNote(db, id, localUser?.id ?? 0);
+            }
+            setSelectedIds(new Set());
+            bumpSyncVersion();
+          },
+        },
+      ],
+    );
+  }, [selectedIds, notes, user, db, bumpSyncVersion]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -284,7 +368,16 @@ export default function HomeScreen() {
           renderItem={({ item }) => (
             <NoteCard
               note={item}
-              onPress={() => router.push(`/(app)/note/${item.id}`)}
+              isSelecting={isSelecting}
+              isSelected={selectedIds.has(item.id)}
+              onPress={() => {
+                if (isSelecting) {
+                  toggleSelect(item.id);
+                } else {
+                  router.push(`/(app)/note/${item.id}`);
+                }
+              }}
+              onLongPress={() => handleLongPress(item.id)}
             />
           )}
           contentContainerStyle={styles.list}
@@ -302,15 +395,37 @@ export default function HomeScreen() {
         />
       )}
 
-      {/* FAB */}
-      <Animated.View entering={FadeIn.delay(300)} style={styles.fab}>
-        <Pressable
-          style={styles.fabBtn}
-          onPress={() => router.push('/(app)/note/create')}
-        >
-          <Ionicons name="add" size={28} color="#fff" />
-        </Pressable>
-      </Animated.View>
+      {/* FAB — hidden during selection */}
+      {!isSelecting && (
+        <Animated.View entering={FadeIn.delay(300)} style={styles.fab}>
+          <Pressable
+            style={styles.fabBtn}
+            onPress={() => router.push(
+              selectedProjet
+                ? { pathname: '/(app)/note/create', params: { projetId: String(selectedProjet.id) } }
+                : '/(app)/note/create'
+            )}
+          >
+            <Ionicons name="add" size={28} color="#fff" />
+          </Pressable>
+        </Animated.View>
+      )}
+
+      {/* Selection action bar */}
+      {isSelecting && (
+        <Animated.View entering={FadeIn} style={styles.selectionBar}>
+          <Pressable onPress={cancelSelection} style={styles.selectionCancel}>
+            <Ionicons name="close" size={20} color={Colors.textPrimary} />
+          </Pressable>
+          <Text style={styles.selectionCount}>
+            {selectedIds.size} sélectionnée{selectedIds.size > 1 ? 's' : ''}
+          </Text>
+          <Pressable onPress={handleDeleteSelected} style={styles.selectionDeleteBtn}>
+            <Ionicons name="trash-outline" size={18} color="#fff" />
+            <Text style={styles.selectionDeleteText}>Supprimer</Text>
+          </Pressable>
+        </Animated.View>
+      )}
 
     </SafeAreaView>
   );
@@ -436,6 +551,10 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
+  cardSelected: {
+    borderWidth: 2,
+    borderColor: Colors.primary,
+  },
   cardBar: {
     width: 4,
   },
@@ -505,6 +624,22 @@ const styles = StyleSheet.create({
     color: Colors.textDisabled,
   },
 
+  // Checkbox (selection mode)
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxSelected: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+
   // Empty
   empty: {
     alignItems: 'center',
@@ -551,5 +686,55 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 12,
     elevation: 8,
+  },
+
+  // Selection action bar
+  selectionBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Layout.screenPaddingH,
+    paddingVertical: 14,
+    paddingBottom: 28,
+    backgroundColor: Colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  selectionCancel: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectionCount: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
+  selectionDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: Colors.error,
+  },
+  selectionDeleteText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
   },
 });

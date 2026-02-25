@@ -214,7 +214,7 @@ export default function AuthScreen() {
           </Animated.View>
 
           <Text style={styles.madeby}>
-            Made by Alexis Katel & Calyte Espoir with ❤️
+            Made by Alexis Katel & Calyte Espoir
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -228,10 +228,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  madeby:  {
+   madeby:  {
     flex: 1,
     textAlign: "center",
     paddingTop: 30,
+    fontSize: 10,
+    color: "gray"
+    
   },
   kav: {
     flex: 1,

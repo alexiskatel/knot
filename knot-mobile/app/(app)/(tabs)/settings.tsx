@@ -276,7 +276,7 @@ export default function SettingsScreen() {
         </View>
 
         <Text style={styles.madeby}>
-          Made by Alexis Katel & Calyte Espoir with ❤️
+          Made by Alexis Katel & Calyte Espoir
         </Text>
 
         <View style={{ height: 40 }} />
@@ -301,6 +301,9 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: "center",
     paddingTop: 30,
+    fontSize: 10,
+    color: "gray"
+    
   },
 
   // Identity card

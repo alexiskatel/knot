@@ -757,8 +757,9 @@ export async function checkDueNotifications(
     currentUserLocalId, in48h,
   );
   for (const t of dueSoon) {
+    const normDue = (s: string) => s.includes('T') ? s : s.replace(' ', 'T') + 'Z';
     const daysLeft = Math.max(
-      Math.ceil((new Date(t.due_date).getTime() - Date.now()) / (24 * 60 * 60 * 1000)),
+      Math.ceil((new Date(normDue(t.due_date)).getTime() - Date.now()) / (24 * 60 * 60 * 1000)),
       0,
     );
     await safeSync('notif-due_soon', async () => {
@@ -819,8 +820,9 @@ export async function checkDueNotifications(
     currentUserLocalId, in48h,
   );
   for (const t of adminDueSoon) {
+    const normDue = (s: string) => s.includes('T') ? s : s.replace(' ', 'T') + 'Z';
     const daysLeft = Math.max(
-      Math.ceil((new Date(t.due_date).getTime() - Date.now()) / (24 * 60 * 60 * 1000)),
+      Math.ceil((new Date(normDue(t.due_date)).getTime() - Date.now()) / (24 * 60 * 60 * 1000)),
       0,
     );
     const assigneName = t.assigne_prenom

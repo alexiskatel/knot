@@ -45,7 +45,7 @@ function timeAgo(iso: string): string {
   if (diffH < 24) return `Il y a ${diffH}h`;
   const diffD = Math.floor(diffH / 24);
   if (diffD < 7) return `Il y a ${diffD}j`;
-  return new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  return new Date(normalized).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 }
 
 // ─── Notification Card ────────────────────────────────────────────────────────

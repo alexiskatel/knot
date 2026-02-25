@@ -57,8 +57,12 @@ const DATE_FILTER_LABELS: Record<DateFilter, string> = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function normDate(s: string) {
+  return s.includes('T') ? s : s.replace(' ', 'T') + 'Z';
+}
+
 function formatDeletedAt(iso: string) {
-  return new Date(iso).toLocaleDateString('fr-FR', {
+  return new Date(normDate(iso)).toLocaleDateString('fr-FR', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',

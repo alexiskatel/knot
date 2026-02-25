@@ -49,8 +49,12 @@ function membreLabel(m: Membre) { return m.prenom ? `${m.prenom} ${m.nom}` : m.n
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+function normDate(s: string) {
+  return s.includes('T') ? s : s.replace(' ', 'T') + 'Z';
+}
+
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('fr-FR', {
+  return new Date(normDate(iso)).toLocaleDateString('fr-FR', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -60,7 +64,7 @@ function formatDate(iso: string) {
 }
 
 function formatShortDate(iso: string) {
-  return new Date(iso).toLocaleDateString('fr-FR', {
+  return new Date(normDate(iso)).toLocaleDateString('fr-FR', {
     day: 'numeric',
     month: 'short',
     hour: '2-digit',

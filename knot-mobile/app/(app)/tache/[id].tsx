@@ -54,15 +54,19 @@ const STATUTS: { key: Tache['statut']; label: string; color: string }[] = [
 function statutColor(s: string) { return STATUTS.find((x) => x.key === s)?.color ?? Colors.textSecondary; }
 function statutLabel(s: string) { return STATUTS.find((x) => x.key === s)?.label ?? s; }
 
+function normDate(s: string) {
+  return s.includes('T') ? s : s.replace(' ', 'T') + 'Z';
+}
+
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('fr-FR', {
+  return new Date(normDate(iso)).toLocaleDateString('fr-FR', {
     day: 'numeric', month: 'long', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
 }
 
 function formatShortDate(iso: string) {
-  return new Date(iso).toLocaleDateString('fr-FR', {
+  return new Date(normDate(iso)).toLocaleDateString('fr-FR', {
     day: 'numeric', month: 'short',
     hour: '2-digit', minute: '2-digit',
   });
@@ -135,7 +139,7 @@ export default function TacheDetailScreen() {
         setDescription(row.description ?? '');
         setSelectedProjetId(row.projet_id);
         setStatut(row.statut);
-        setDueDate(row.due_date ? new Date(row.due_date) : null);
+        setDueDate(row.due_date ? new Date(normDate(row.due_date)) : null);
         setAssigneId(row.assigne_id);
       }
     } finally {
@@ -442,7 +446,7 @@ export default function TacheDetailScreen() {
       setDescription(tache.description ?? '');
       setSelectedProjetId(tache.projet_id);
       setStatut(tache.statut);
-      setDueDate(tache.due_date ? new Date(tache.due_date) : null);
+      setDueDate(tache.due_date ? new Date(normDate(tache.due_date)) : null);
       setAssigneId(tache.assigne_id);
     }
     setEditMode(false);
@@ -551,7 +555,7 @@ export default function TacheDetailScreen() {
 
   const isPending = tache.sync_status === 'pending';
   const canSave = titre.trim().length > 0 && selectedProjetId !== null;
-  const isOverdue = tache.due_date && tache.statut !== 'done' && new Date(tache.due_date) < new Date();
+  const isOverdue = tache.due_date && tache.statut !== 'done' && new Date(normDate(tache.due_date)) < new Date();
 
   // Shared pickers (used in both modes)
   const pickerModals = (

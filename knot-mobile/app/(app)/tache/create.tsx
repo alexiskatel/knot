@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -45,6 +45,7 @@ interface Membre {
 
 export default function CreateTacheScreen() {
   const router = useRouter();
+  const { projetId: projetIdParam } = useLocalSearchParams<{ projetId?: string }>();
   const db = useSQLiteContext();
   const { user, team } = useAuth();
   const { projets } = useProjets();
@@ -64,10 +65,12 @@ export default function CreateTacheScreen() {
   const [tempDate, setTempDate] = useState<Date>(new Date());
   const [isSaving, setIsSaving] = useState(false);
 
-  // Auto-select first projet
+  // Sélectionne le projet passé en paramètre, sinon le premier de la liste
   useEffect(() => {
     if (projets.length > 0 && selectedProjetId === null) {
-      setSelectedProjetId(projets[0].id);
+      const paramId = projetIdParam ? Number(projetIdParam) : null;
+      const match = paramId ? projets.find((p) => p.id === paramId) : null;
+      setSelectedProjetId(match?.id ?? projets[0].id);
     }
   }, [projets]);
 
