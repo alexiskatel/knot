@@ -195,6 +195,9 @@ function TacheCard({ tache, onPress }: { tache: Tache; onPress: () => void }) {
             )}
           </View>
         </View>
+        {tache.projet_titre && <Text style={[styles.overdueBadgeText, {color: tache.projet_couleur}]}> {tache.projet_titre} </Text>}
+        
+
       </View>
     </Pressable>
   );

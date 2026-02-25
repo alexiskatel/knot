@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useSQLiteContext } from 'expo-sqlite';
-import { getTachesByTeam, deleteTache, type Tache } from '@/src/db/taches';
 import { useAuth } from '@/src/contexts/AuthContext';
 import { useSync } from '@/src/contexts/SyncContext';
+import { deleteTache, getTachesByTeam, type Tache } from '@/src/db/taches';
+import { useSQLiteContext } from 'expo-sqlite';
+import { useCallback, useEffect, useState } from 'react';
 
 export function useTaches(projetId?: number) {
   const db = useSQLiteContext();
@@ -22,6 +22,14 @@ export function useTaches(projetId?: number) {
     setIsLoading(true);
     try {
       const rows = await getTachesByTeam(db, localTeam.id, projetId);
+
+      rows.map(row => ({
+        ...row,
+        projet: typeof row.projet === 'string' ? JSON.parse(row.projet) : row.projet
+      }));
+
+      // console.log('Ici (formaté):', tachesAvecProjets);
+      
       setTaches(rows);
     } finally {
       setIsLoading(false);

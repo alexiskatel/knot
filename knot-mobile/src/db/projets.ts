@@ -25,7 +25,7 @@ export async function getAllProjets(db: SQLiteDatabase, teamId: number): Promise
      LEFT JOIN notes n ON n.projet_id = p.id AND n.deleted_at IS NULL
      WHERE p.team_id = ? AND p.statut = 1 AND p.deleted_at IS NULL
      GROUP BY p.id
-     ORDER BY p.created_at ASC`,
+     ORDER BY p.titre ASC`,
     teamId,
   );
 }

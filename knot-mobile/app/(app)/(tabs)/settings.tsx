@@ -219,7 +219,7 @@ export default function SettingsScreen() {
         </View>
 
         {/* Test notifications */}
-        <SectionHeader title="Tests" />
+        {/* <SectionHeader title="Tests" />
         <View style={styles.section}>
           <SettingRow
             icon="notifications-outline"
@@ -244,7 +244,7 @@ export default function SettingsScreen() {
               }
             }}
           />
-        </View>
+        </View> */}
 
 
         {/* Déconnexion */}

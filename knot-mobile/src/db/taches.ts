@@ -1,5 +1,6 @@
 import { type SQLiteDatabase } from 'expo-sqlite';
 import { randomUUID } from 'expo-crypto';
+import { Projet } from './projets';
 
 export interface Tache {
   id: number;
@@ -9,6 +10,7 @@ export interface Tache {
   description: string | null;
   statut: 'todo' | 'en_cours' | 'done';
   projet_id: number;
+  projet: Projet;
   auteur_id: number;
   assigne_id: number | null;
   team_id: number;
@@ -34,20 +36,28 @@ export async function getTachesByTeam(
   projetId?: number,
 ): Promise<Tache[]> {
   const sql = projetId
-    ? `SELECT t.*, p.titre as projet_titre, p.couleur as projet_couleur,
+    ? `SELECT t.*, 
               u.nom as auteur_nom, u.prenom as auteur_prenom,
               a.nom as assigne_nom, a.prenom as assigne_prenom,
-              (SELECT COUNT(*) FROM commentaires WHERE tache_id = t.id) as commentaire_count
+              (SELECT COUNT(*) FROM commentaires WHERE tache_id = t.id) as commentaire_count,
+              p.id as projet_id_ref,
+              p.titre as projet_titre,
+              p.couleur as projet_couleur,
+              p.statut as projet_statut
        FROM taches t
        LEFT JOIN projets p ON p.id = t.projet_id
        LEFT JOIN users u ON u.id = t.auteur_id
        LEFT JOIN users a ON a.id = t.assigne_id
        WHERE t.team_id = ? AND t.projet_id = ? AND t.deleted_at IS NULL
        ORDER BY t.due_date ASC, t.created_at DESC`
-    : `SELECT t.*, p.titre as projet_titre, p.couleur as projet_couleur,
+    : `SELECT t.*, 
               u.nom as auteur_nom, u.prenom as auteur_prenom,
               a.nom as assigne_nom, a.prenom as assigne_prenom,
-              (SELECT COUNT(*) FROM commentaires WHERE tache_id = t.id) as commentaire_count
+              (SELECT COUNT(*) FROM commentaires WHERE tache_id = t.id) as commentaire_count,
+              p.id as projet_id_ref,
+              p.titre as projet_titre,
+              p.couleur as projet_couleur,
+              p.statut as projet_statut
        FROM taches t
        LEFT JOIN projets p ON p.id = t.projet_id
        LEFT JOIN users u ON u.id = t.auteur_id
