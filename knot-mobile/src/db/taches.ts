@@ -2,6 +2,14 @@ import { type SQLiteDatabase } from 'expo-sqlite';
 import { randomUUID } from 'expo-crypto';
 import { Projet } from './projets';
 
+export type Priorite = 'haute' | 'moyenne' | 'basse';
+
+export const PRIORITES: { key: Priorite; label: string; color: string }[] = [
+  { key: 'haute',   label: 'Haute',   color: '#EF4444' },
+  { key: 'moyenne', label: 'Moyenne', color: '#F59E0B' },
+  { key: 'basse',   label: 'Basse',   color: '#6B7280' },
+];
+
 export interface Tache {
   id: number;
   server_id: number | null;
@@ -9,6 +17,7 @@ export interface Tache {
   titre: string;
   description: string | null;
   statut: 'todo' | 'en_cours' | 'done';
+  priorite: Priorite | null;
   projet_id: number;
   projet: Projet;
   auteur_id: number;
@@ -88,6 +97,7 @@ export async function createTache(
     titre: string;
     description?: string;
     statut?: Tache['statut'];
+    priorite?: Priorite | null;
     projet_id: number;
     auteur_id: number;
     assigne_id?: number | null;
@@ -101,13 +111,14 @@ export async function createTache(
 
   const result = await db.runAsync(
     `INSERT INTO taches
-       (sync_id, titre, description, statut, projet_id, auteur_id, assigne_id,
+       (sync_id, titre, description, statut, priorite, projet_id, auteur_id, assigne_id,
         team_id, due_date, created_at, updated_at, sync_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
     sync_id,
     data.titre,
     data.description ?? null,
     statut,
+    data.priorite ?? null,
     data.projet_id,
     data.auteur_id,
     data.assigne_id ?? null,
@@ -124,6 +135,7 @@ export async function createTache(
     titre: data.titre,
     description: data.description ?? null,
     statut,
+    priorite: data.priorite ?? null,
     projet_id: data.projet_id,
     auteur_id: data.auteur_id,
     assigne_id: data.assigne_id ?? null,
@@ -142,6 +154,7 @@ export async function updateTache(
     titre?: string;
     description?: string | null;
     statut?: Tache['statut'];
+    priorite?: Priorite | null; // undefined = ne pas modifier, null = effacer
     projet_id?: number;
     assigne_id?: number | null; // undefined = ne pas modifier, null = effacer
     due_date?: string | null;   // undefined = ne pas modifier, null = effacer
@@ -155,6 +168,7 @@ export async function updateTache(
   if (data.titre !== undefined)    { clauses.push('titre = ?');       params.push(data.titre); }
   if (data.description !== undefined) { clauses.push('description = ?'); params.push(data.description ?? null); }
   if (data.statut !== undefined)   { clauses.push('statut = ?');      params.push(data.statut); }
+  if ('priorite' in data)          { clauses.push('priorite = ?');    params.push(data.priorite ?? null); }
   if (data.projet_id !== undefined){ clauses.push('projet_id = ?');   params.push(data.projet_id); }
   if ('assigne_id' in data)        { clauses.push('assigne_id = ?');  params.push(data.assigne_id ?? null); }
   if ('due_date' in data)          { clauses.push('due_date = ?');    params.push(data.due_date ?? null); }

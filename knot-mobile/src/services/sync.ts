@@ -84,6 +84,7 @@ interface ServerTache {
   titre: string;
   description: string | null;
   statut: string;
+  priorite: string | null;
   projet_id: number;
   auteur_id: number;
   assigne_id: number | null;
@@ -295,21 +296,21 @@ export async function syncAll(
         if (existing.sync_status === 'pending' && existing.updated_at > t.updated_at) continue;
         await db.runAsync(
           `UPDATE taches
-           SET titre = ?, description = ?, statut = ?, projet_id = ?,
+           SET titre = ?, description = ?, statut = ?, priorite = ?, projet_id = ?,
                assigne_id = ?, due_date = ?, updated_at = ?, deleted_at = ?, deleted_by = ?, sync_status = 'synced'
            WHERE server_id = ?`,
-          t.titre, t.description ?? null, t.statut ?? 'todo',
+          t.titre, t.description ?? null, t.statut ?? 'todo', t.priorite ?? null,
           projetRow.id, assigneRow?.id ?? null, t.due_date ?? null,
           t.updated_at, t.deleted_at ?? null, tacheDeletedByRow?.id ?? null, t.id,
         );
       } else {
         await db.runAsync(
           `INSERT INTO taches
-             (server_id, sync_id, titre, description, statut, projet_id, auteur_id,
+             (server_id, sync_id, titre, description, statut, priorite, projet_id, auteur_id,
               assigne_id, team_id, due_date, created_at, updated_at, deleted_at, deleted_by, sync_status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')`,
           t.id, randomUUID(), t.titre, t.description ?? null,
-          t.statut ?? 'todo', projetRow.id, auteurRow?.id ?? 1,
+          t.statut ?? 'todo', t.priorite ?? null, projetRow.id, auteurRow?.id ?? 1,
           assigneRow?.id ?? null, teamLocalId,
           t.due_date ?? null, t.created_at, t.updated_at, t.deleted_at ?? null, tacheDeletedByRow?.id ?? null,
         );
@@ -600,6 +601,7 @@ export async function pushTache(
     titre: tache.titre,
     description: tache.description ?? null,
     statut: tache.statut,
+    priorite: tache.priorite ?? null,
     projet_id: tache.projet_server_id,
     auteur_id: tache.auteur_server_id,
     assigne_id: tache.assigne_server_id ?? null,

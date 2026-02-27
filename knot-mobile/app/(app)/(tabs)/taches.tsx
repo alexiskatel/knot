@@ -10,6 +10,7 @@ import {
   Modal,
   RefreshControl,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -31,6 +32,8 @@ import { AppHeader } from '@/src/components/shared/AppHeader';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
 import type { Tache } from '@/src/db/taches';
+import { PRIORITES, softDeleteTache } from '@/src/db/taches';
+import { api } from '@/src/api/client';
 import type { Projet } from '@/src/db/projets';
 
 interface Membre { id: number; nom: string; prenom: string | null; }
@@ -109,10 +112,23 @@ function ProjetFilterCard({
 // ─── Tache Card ───────────────────────────────────────────────────────────────
 // Carte compacte — une ligne titre, une ligne meta
 
-function TacheCard({ tache, onPress }: { tache: Tache; onPress: () => void }) {
+function TacheCard({
+  tache,
+  onPress,
+  onLongPress,
+  isSelecting,
+  isSelected,
+}: {
+  tache: Tache;
+  onPress: () => void;
+  onLongPress?: () => void;
+  isSelecting?: boolean;
+  isSelected?: boolean;
+}) {
   const color = tache.projet_couleur ?? Colors.primary;
   const sColor = statutColor(tache.statut);
   const isPending = tache.sync_status === 'pending';
+  const prioriteCfg = tache.priorite ? PRIORITES.find((p) => p.key === tache.priorite) : null;
 
   const assigneLabel = tache.assigne_prenom
     ? `${tache.assigne_prenom} ${tache.assigne_nom}`
@@ -131,7 +147,7 @@ function TacheCard({ tache, onPress }: { tache: Tache; onPress: () => void }) {
   const isDueUrgent = daysLeft !== null && daysLeft <= 2;
 
   return (
-    <Pressable onPress={onPress} style={styles.card}>
+    <Pressable onPress={onPress} onLongPress={onLongPress} style={[styles.card, isSelected && styles.cardSelected]}>
       <View style={[styles.cardBar, { backgroundColor: color }]} />
 
       {/* Cercles décoratifs en fond */}
@@ -155,7 +171,19 @@ function TacheCard({ tache, onPress }: { tache: Tache; onPress: () => void }) {
                 </Text>
               </View>
             )}
-            {isPending && <Ionicons name="cloud-upload-outline" size={13} color={Colors.textDisabled} />}
+            {prioriteCfg && (
+              <View style={[styles.prioriteBadge, { backgroundColor: prioriteCfg.color + '20' }]}>
+                <View style={[styles.prioriteDot, { backgroundColor: prioriteCfg.color }]} />
+                <Text style={[styles.prioriteText, { color: prioriteCfg.color }]}>{prioriteCfg.label}</Text>
+              </View>
+            )}
+            {isSelecting ? (
+              <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+                {isSelected && <Ionicons name="checkmark" size={10} color="#fff" />}
+              </View>
+            ) : (
+              isPending && <Ionicons name="cloud-upload-outline" size={13} color={Colors.textDisabled} />
+            )}
           </View>
         </View>
 
@@ -233,13 +261,31 @@ function isOverdueFn(t: Tache, now: number): boolean {
   return !!t.due_date && t.statut !== 'done' && new Date(normDate(t.due_date)).getTime() < now;
 }
 
+const PRIO_ORDER: Record<string, number> = { haute: 0, moyenne: 1, basse: 2 };
+
+function sortTaches(list: Tache[]): Tache[] {
+  return [...list].sort((a, b) => {
+    // Terminées → bas
+    if (a.statut === 'done' && b.statut !== 'done') return 1;
+    if (b.statut === 'done' && a.statut !== 'done') return -1;
+    // Priorité
+    const pa = a.priorite ? (PRIO_ORDER[a.priorite] ?? 3) : 3;
+    const pb = b.priorite ? (PRIO_ORDER[b.priorite] ?? 3) : 3;
+    if (pa !== pb) return pa - pb;
+    // Date d'échéance (la plus proche en premier, sans date en dernier)
+    const da = a.due_date ? new Date(normDate(a.due_date)).getTime() : Infinity;
+    const db2 = b.due_date ? new Date(normDate(b.due_date)).getTime() : Infinity;
+    return da - db2;
+  });
+}
+
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function TachesScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
-  const { sync } = useSync();
-  const { team } = useAuth();
+  const { sync, bumpSyncVersion } = useSync();
+  const { team, user } = useAuth();
   const { projets } = useProjets();
   const [selectedProjet, setSelectedProjet] = useState<Projet | null>(null);
   const [selectedStatut, setSelectedStatut] = useState<StatutFilter>('all');
@@ -250,6 +296,10 @@ export default function TachesScreen() {
   // Toujours charger toutes les taches — le filtrage projet se fait côté client
   const { taches: allTaches, isLoading, refresh } = useTaches();
   const [refreshing, setRefreshing] = useState(false);
+
+  // Multi-select
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const isSelecting = selectedIds.size > 0;
 
   // Chargement des membres de l'équipe
   useEffect(() => {
@@ -287,7 +337,7 @@ export default function TachesScreen() {
     ? membreFiltered.filter((t) => t.projet_id === selectedProjet.id)
     : membreFiltered;
 
-  // Liste finale : projet + membre + statut + recherche
+  // Liste finale : projet + membre + statut + recherche + tri
   const filtered = (() => {
     let result = projectFiltered;
     if (selectedStatut === 'overdue') {
@@ -303,7 +353,7 @@ export default function TachesScreen() {
           (t.description ?? '').toLowerCase().includes(q),
       );
     }
-    return result;
+    return sortTaches(result);
   })();
 
   // Counts des filtres statut (projet + membre, sans filtre statut)
@@ -326,6 +376,58 @@ export default function TachesScreen() {
   }
 
   const hasFilter = selectedProjet !== null || selectedStatut !== 'all' || selectedMembreId !== null;
+
+  // ── Multi-select handlers ────────────────────────────────────────────────
+
+  const handleLongPress = useCallback((id: number) => {
+    setSelectedIds(new Set([id]));
+  }, []);
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const cancelSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const handleDeleteSelected = useCallback(() => {
+    const count = selectedIds.size;
+    Alert.alert(
+      `Supprimer ${count} tâche${count > 1 ? 's' : ''}`,
+      'Cette action est irréversible.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: async () => {
+            const localUser = user
+              ? await db.getFirstAsync<{ id: number }>('SELECT id FROM users WHERE server_id = ?', user.id)
+              : null;
+            const ids = Array.from(selectedIds);
+            for (const id of ids) {
+              const tache = allTaches.find((t) => t.id === id);
+              if (!tache) continue;
+              if (tache.server_id) {
+                api.delete(`/taches/${tache.server_id}`).catch((e) => {
+                  console.warn('[Delete] Tache', tache.server_id, 'échoué:', e);
+                });
+              }
+              await softDeleteTache(db, id, localUser?.id ?? 0);
+            }
+            setSelectedIds(new Set());
+            bumpSyncVersion();
+          },
+        },
+      ],
+    );
+  }, [selectedIds, allTaches, user, db, bumpSyncVersion]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -492,11 +594,21 @@ export default function TachesScreen() {
       ) : (
         <FlatList
           data={filtered}
+          extraData={selectedIds.size}
           keyExtractor={(item) => String(item.id)}
           renderItem={({ item }) => (
             <TacheCard
               tache={item}
-              onPress={() => router.push(`/(app)/tache/${item.id}`)}
+              isSelecting={isSelecting}
+              isSelected={selectedIds.has(item.id)}
+              onPress={() => {
+                if (isSelecting) {
+                  toggleSelect(item.id);
+                } else {
+                  router.push(`/(app)/tache/${item.id}`);
+                }
+              }}
+              onLongPress={() => handleLongPress(item.id)}
             />
           )}
           contentContainerStyle={styles.list}
@@ -514,19 +626,37 @@ export default function TachesScreen() {
         />
       )}
 
-      {/* FAB */}
-      <Animated.View entering={FadeIn.delay(300)} style={styles.fab}>
-        <Pressable
-          style={styles.fabBtn}
-          onPress={() => router.push(
-            selectedProjet
-              ? { pathname: '/(app)/tache/create', params: { projetId: String(selectedProjet.id) } }
-              : '/(app)/tache/create'
-          )}
-        >
-          <Ionicons name="add" size={28} color="#fff" />
-        </Pressable>
-      </Animated.View>
+      {/* FAB — caché pendant la sélection */}
+      {!isSelecting && (
+        <Animated.View entering={FadeIn.delay(300)} style={styles.fab}>
+          <Pressable
+            style={styles.fabBtn}
+            onPress={() => router.push(
+              selectedProjet
+                ? { pathname: '/(app)/tache/create', params: { projetId: String(selectedProjet.id) } }
+                : '/(app)/tache/create'
+            )}
+          >
+            <Ionicons name="add" size={28} color="#fff" />
+          </Pressable>
+        </Animated.View>
+      )}
+
+      {/* Barre de sélection */}
+      {isSelecting && (
+        <Animated.View entering={FadeIn} style={styles.selectionBar}>
+          <Pressable onPress={cancelSelection} style={styles.selectionCancel}>
+            <Ionicons name="close" size={20} color={Colors.textPrimary} />
+          </Pressable>
+          <Text style={styles.selectionCount}>
+            {selectedIds.size} sélectionnée{selectedIds.size > 1 ? 's' : ''}
+          </Text>
+          <Pressable onPress={handleDeleteSelected} style={styles.selectionDeleteBtn}>
+            <Ionicons name="trash-outline" size={18} color="#fff" />
+            <Text style={styles.selectionDeleteText}>Supprimer</Text>
+          </Pressable>
+        </Animated.View>
+      )}
 
     </SafeAreaView>
   );
@@ -771,6 +901,17 @@ const styles = StyleSheet.create({
   },
   dueUrgentBadgeText: { fontSize: 9, fontWeight: '700', color: Colors.error },
 
+  prioriteBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  prioriteDot: { width: 5, height: 5, borderRadius: 2.5 },
+  prioriteText: { fontSize: 9, fontWeight: '700' },
+
   // Empty
   empty: { alignItems: 'center', paddingTop: 60, gap: 10 },
   emptyIcon: {
@@ -784,6 +925,26 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: Colors.textPrimary, textAlign: 'center' },
   emptySubtitle: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', lineHeight: 20 },
+
+  // Checkbox (mode sélection)
+  cardSelected: {
+    borderWidth: 2,
+    borderColor: Colors.primary,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxSelected: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
 
   // FAB
   fab: { position: 'absolute', bottom: 20, right: Layout.screenPaddingH },
@@ -799,5 +960,55 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 12,
     elevation: 8,
+  },
+
+  // Barre de sélection
+  selectionBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Layout.screenPaddingH,
+    paddingVertical: 14,
+    paddingBottom: 28,
+    backgroundColor: Colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  selectionCancel: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectionCount: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
+  selectionDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: Colors.error,
+  },
+  selectionDeleteText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
   },
 });

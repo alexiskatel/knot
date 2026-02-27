@@ -364,6 +364,7 @@ export default function HomeScreen() {
       ) : (
         <FlatList
           data={filteredNotes}
+          extraData={selectedIds.size}
           keyExtractor={(item) => String(item.id)}
           renderItem={({ item }) => (
             <NoteCard

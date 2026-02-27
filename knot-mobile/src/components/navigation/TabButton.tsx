@@ -15,12 +15,13 @@ interface TabButtonProps extends TabTriggerSlotProps {
   icon: keyof typeof Ionicons.glyphMap;
   iconFocused: keyof typeof Ionicons.glyphMap;
   label: string;
+  hidden?: boolean;
 }
 
 const AnimatedView = Animated.createAnimatedComponent(View);
 
 export const TabButton = forwardRef<View, TabButtonProps>(
-  ({ icon, iconFocused, label, isFocused, onPress, onLongPress }, ref) => {
+  ({ icon, iconFocused, label, isFocused, onPress, onLongPress, hidden }, ref) => {
     const scale = useSharedValue(1);
     const active = useSharedValue(isFocused ? 1 : 0);
 
@@ -40,6 +41,8 @@ export const TabButton = forwardRef<View, TabButtonProps>(
       opacity: active.value,
       transform: [{ scaleX: active.value }],
     }));
+
+    if (hidden) return <View ref={ref} style={{ width: 0, height: 0, overflow: 'hidden' }} />;
 
     function handlePress(e: GestureResponderEvent) {
       scale.value = withSpring(0.88, { damping: 20, stiffness: 400 }, () => {

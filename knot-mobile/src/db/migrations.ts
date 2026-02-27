@@ -1,6 +1,6 @@
 import { type SQLiteDatabase } from 'expo-sqlite';
 
-const DATABASE_VERSION = 6;
+const DATABASE_VERSION = 7;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
   const result = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
@@ -212,4 +212,10 @@ export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
       PRAGMA user_version = 6;
     `);
   }
+
+  if (currentVersion < 7) {
+    try { await db.runAsync('ALTER TABLE taches ADD COLUMN priorite TEXT'); } catch {}
+    await db.runAsync('PRAGMA user_version = 7');
+  }
+
 }

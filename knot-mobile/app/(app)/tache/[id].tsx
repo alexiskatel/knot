@@ -31,7 +31,7 @@ import {
   upsertCommentaireFromServer,
   type Commentaire,
 } from '@/src/db/commentaires';
-import { softDeleteTache, getTacheById, updateTache, type Tache } from '@/src/db/taches';
+import { softDeleteTache, getTacheById, updateTache, PRIORITES, type Tache, type Priorite } from '@/src/db/taches';
 import {
   getLiaisonsByTache,
   createLiaison,
@@ -94,6 +94,7 @@ export default function TacheDetailScreen() {
   const [description, setDescription] = useState('');
   const [selectedProjetId, setSelectedProjetId] = useState<number | null>(null);
   const [statut, setStatut] = useState<Tache['statut']>('todo');
+  const [priorite, setPriorite] = useState<Priorite | null>(null);
   const [dueDate, setDueDate] = useState<Date | null>(null);
   const [assigneId, setAssigneId] = useState<number | null>(null);
   const [membres, setMembres] = useState<Membre[]>([]);
@@ -139,6 +140,7 @@ export default function TacheDetailScreen() {
         setDescription(row.description ?? '');
         setSelectedProjetId(row.projet_id);
         setStatut(row.statut);
+        setPriorite(row.priorite ?? null);
         setDueDate(row.due_date ? new Date(normDate(row.due_date)) : null);
         setAssigneId(row.assigne_id);
       }
@@ -394,6 +396,7 @@ export default function TacheDetailScreen() {
         titre: titre.trim(),
         description: description.trim() || null,
         statut,
+        priorite,
         projet_id: selectedProjetId,
         assigne_id: assigneId,
         due_date: dueDate ? dueDate.toISOString() : null,
@@ -404,7 +407,7 @@ export default function TacheDetailScreen() {
     } finally {
       setIsSaving(false);
     }
-  }, [tache, titre, description, selectedProjetId, statut, assigneId, dueDate, team, db, load]);
+  }, [tache, titre, description, selectedProjetId, statut, priorite, assigneId, dueDate, team, db, load]);
 
   const handleStatusChange = useCallback(async (newStatut: Tache['statut']) => {
     if (!tache || !team) return;
@@ -446,6 +449,7 @@ export default function TacheDetailScreen() {
       setDescription(tache.description ?? '');
       setSelectedProjetId(tache.projet_id);
       setStatut(tache.statut);
+      setPriorite(tache.priorite ?? null);
       setDueDate(tache.due_date ? new Date(normDate(tache.due_date)) : null);
       setAssigneId(tache.assigne_id);
     }
@@ -704,6 +708,26 @@ export default function TacheDetailScreen() {
               </View>
             </View>
 
+            {/* Priorité */}
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Priorité</Text>
+              <View style={styles.chipRow}>
+                {PRIORITES.map((p) => {
+                  const active = priorite === p.key;
+                  return (
+                    <Pressable
+                      key={p.key}
+                      onPress={() => setPriorite(active ? null : p.key)}
+                      style={[styles.chip, active && { backgroundColor: p.color + '20', borderColor: p.color }]}
+                    >
+                      <View style={[styles.chipDot, { backgroundColor: p.color }]} />
+                      <Text style={[styles.chipText, active && { color: p.color }]}>{p.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
             {/* Titre */}
             <TextInput
               style={styles.titleInput}
@@ -866,6 +890,19 @@ export default function TacheDetailScreen() {
                 : '—'}
             </Text>
           </View>
+
+          {(() => {
+            const p = tache.priorite ? PRIORITES.find((x) => x.key === tache.priorite) : null;
+            return p ? (
+              <View style={styles.infoRow}>
+                <Ionicons name="flag-outline" size={15} color={p.color} />
+                <Text style={styles.infoLabel}>Priorité</Text>
+                <View style={[styles.prioriteInlineTag, { backgroundColor: p.color + '20' }]}>
+                  <Text style={[styles.prioriteInlineText, { color: p.color }]}>{p.label}</Text>
+                </View>
+              </View>
+            ) : null;
+          })()}
 
           <View style={styles.infoRow}>
             <Ionicons name="time-outline" size={15} color={Colors.textSecondary} />
@@ -1262,6 +1299,10 @@ const styles = StyleSheet.create({
   },
   infoLabel: { fontSize: 13, color: Colors.textSecondary, width: 80 },
   infoValue: { flex: 1, fontSize: 13, color: Colors.textPrimary, fontWeight: '500' },
+  prioriteInlineTag: {
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
+  },
+  prioriteInlineText: { fontSize: 12, fontWeight: '600' },
 
   selectorRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8,

@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { useAuth } from '@/src/contexts/AuthContext';
 import { useProjets } from '@/src/hooks/useProjets';
-import { createTache } from '@/src/db/taches';
+import { createTache, PRIORITES, type Priorite } from '@/src/db/taches';
 import { pushTache } from '@/src/services/sync';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
@@ -54,6 +54,7 @@ export default function CreateTacheScreen() {
   const [description, setDescription] = useState('');
   const [selectedProjetId, setSelectedProjetId] = useState<number | null>(null);
   const [statut, setStatut] = useState<Statut>('todo');
+  const [priorite, setPriorite] = useState<Priorite | null>(null);
   const [dueDate, setDueDate] = useState<Date | null>(null);
   const [assigneId, setAssigneId] = useState<number | null>(null);
   const [membres, setMembres] = useState<Membre[]>([]);
@@ -136,6 +137,7 @@ export default function CreateTacheScreen() {
         titre: titre.trim(),
         description: description.trim() || undefined,
         statut,
+        priorite,
         projet_id: selectedProjetId,
         auteur_id: localUser.id,
         assigne_id: assigneId,
@@ -209,6 +211,26 @@ export default function CreateTacheScreen() {
                   <Text style={[styles.chipText, statut === s.key && { color: s.color }]}>{s.label}</Text>
                 </Pressable>
               ))}
+            </View>
+          </View>
+
+          {/* Priorité */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Priorité</Text>
+            <View style={styles.chipRow}>
+              {PRIORITES.map((p) => {
+                const active = priorite === p.key;
+                return (
+                  <Pressable
+                    key={p.key}
+                    onPress={() => setPriorite(active ? null : p.key)}
+                    style={[styles.chip, active && { backgroundColor: p.color + '20', borderColor: p.color }]}
+                  >
+                    <View style={[styles.chipDot, { backgroundColor: p.color }]} />
+                    <Text style={[styles.chipText, active && { color: p.color }]}>{p.label}</Text>
+                  </Pressable>
+                );
+              })}
             </View>
           </View>
 

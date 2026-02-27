@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { useFocusEffect } from 'expo-router';
 import {
   View,
   Text,
@@ -156,6 +157,9 @@ export default function CorbeilleScreen() {
   }, [team, activeTab, search, selectedProjetId, dateFilter]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Recharge aussi à chaque fois que l'onglet reprend le focus
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const handleRestore = useCallback((item: TrashedItem) => {
     Alert.alert(
