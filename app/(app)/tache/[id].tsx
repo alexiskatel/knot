@@ -160,7 +160,7 @@ export default function TacheDetailScreen() {
       );
       if (!localTeam) return;
       const rows = await db.getAllAsync<Membre>(
-        'SELECT id, nom, prenom FROM users WHERE team_id = ? ORDER BY prenom, nom',
+        'SELECT id, nom, prenom FROM users WHERE team_id = ? AND statut = 1 ORDER BY prenom, nom',
         localTeam.id,
       );
       setMembres(rows);

@@ -52,6 +52,7 @@ interface ServerUser {
   nom: string;
   prenom: string | null;
   email: string | null;
+  statut: boolean | number;
 }
 
 interface ServerProjet {
@@ -165,22 +166,23 @@ export async function syncAll(
 
   // ── Membres ───────────────────────────────────────────────────────────────
   await safeSync('membres', async () => {
-    const res = await api.get<any>(`/teams/${teamServerId}/members`);
+    const res = await api.get<any>(`/teams/${teamServerId}/members?include_inactive=1`);
     const users = extractList<ServerUser>(res);
     for (const u of users) {
+      const statut = u.statut ? 1 : 0;
       const existing = await db.getFirstAsync<{ id: number }>(
         'SELECT id FROM users WHERE server_id = ?', u.id,
       );
       if (existing) {
         await db.runAsync(
-          'UPDATE users SET nom = ?, prenom = ?, email = ? WHERE server_id = ?',
-          u.nom, u.prenom ?? '', u.email ?? '', u.id,
+          'UPDATE users SET nom = ?, prenom = ?, email = ?, statut = ? WHERE server_id = ?',
+          u.nom, u.prenom ?? '', u.email ?? '', statut, u.id,
         );
       } else {
         await db.runAsync(
-          `INSERT OR IGNORE INTO users (server_id, nom, prenom, email, team_id, api_key)
-           VALUES (?, ?, ?, ?, ?, '')`,
-          u.id, u.nom, u.prenom ?? '', u.email ?? '', teamLocalId,
+          `INSERT OR IGNORE INTO users (server_id, nom, prenom, email, team_id, api_key, statut)
+           VALUES (?, ?, ?, ?, ?, '', ?)`,
+          u.id, u.nom, u.prenom ?? '', u.email ?? '', teamLocalId, statut,
         );
       }
     }
@@ -217,6 +219,32 @@ export async function syncAll(
           teamLocalId, p.created_at, p.updated_at, p.deleted_at ?? null, deletedByRow?.id ?? null,
         );
       }
+    }
+  });
+
+  // ── Projet membres (droits d'accès) ──────────────────────────────────────
+  await safeSync('projet-membres', async () => {
+    const res = await api.get<any>(`/teams/${teamServerId}/projet-membres`);
+    const pairs = extractList<{ projet_id: number; user_id: number }>(res);
+
+    // Remplacer toute la table pour les projets de cette équipe
+    await db.runAsync(
+      'DELETE FROM projet_membres WHERE projet_id IN (SELECT id FROM projets WHERE team_id = ?)',
+      teamLocalId,
+    );
+
+    for (const p of pairs) {
+      const projetRow = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM projets WHERE server_id = ?', p.projet_id,
+      );
+      const userRow = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM users WHERE server_id = ?', p.user_id,
+      );
+      if (!projetRow || !userRow) continue;
+      await db.runAsync(
+        'INSERT OR IGNORE INTO projet_membres (projet_id, user_id) VALUES (?, ?)',
+        projetRow.id, userRow.id,
+      );
     }
   });
 

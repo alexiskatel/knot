@@ -28,6 +28,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const isSyncingRef = useRef(false);
   const lastSyncAtRef = useRef<number>(0);
   const wasConnectedRef = useRef<boolean | null>(null);
+  // Always points to the latest sync() — prevents stale closures in effects
+  const syncRef = useRef<() => Promise<void>>(async () => {});
 
   async function sync() {
     if (isSyncingRef.current || !user || !team) return;
@@ -56,22 +58,24 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // Sync au login
+  // Keep syncRef up-to-date every render so effects never call a stale sync
+  syncRef.current = sync;
+
+  // Sync au login / changement de compte
   useEffect(() => {
-    if (user && team) sync();
+    if (user && team) syncRef.current();
   }, [user?.id]);
 
   // Sync à chaque changement de page
   useEffect(() => {
-    if (!user || !team) return;
-    sync();
+    syncRef.current();
   }, [pathname]);
 
   // Sync quand l'app revient au premier plan
   useEffect(() => {
     if (!user) return;
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
-      if (state === 'active') sync();
+      if (state === 'active') syncRef.current();
     });
     return () => sub.remove();
   }, [user?.id]);
@@ -82,7 +86,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     const unsubscribe = NetInfo.addEventListener((state) => {
       const isNowConnected = state.isConnected === true && state.isInternetReachable !== false;
       if (isNowConnected && wasConnectedRef.current === false) {
-        sync();
+        syncRef.current();
       }
       wasConnectedRef.current = isNowConnected;
     });

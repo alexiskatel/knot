@@ -1,9 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import Storage from 'expo-sqlite/kv-store';
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,11 +19,12 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { AppHeader } from '@/src/components/shared/AppHeader';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
-import { useAuth } from '@/src/contexts/AuthContext';
+import { useAuth, type Account } from '@/src/contexts/AuthContext';
 import { useSync } from '@/src/contexts/SyncContext';
 import { migrateDbIfNeeded } from '@/src/db/migrations';
 import { sendLocalNotification } from '@/src/services/pushNotifications';
 import { createNotification } from '@/src/db/notifications';
+import AddAccountModal from '@/src/components/settings/AddAccountModal';
 
 // ─── Section item ─────────────────────────────────────────────────────────────
 
@@ -62,15 +65,62 @@ function SectionHeader({ title }: { title: string }) {
   return <Text style={styles.sectionHeader}>{title}</Text>;
 }
 
+// ─── Account card ─────────────────────────────────────────────────────────────
+
+function AccountCard({
+  account,
+  isActive,
+  onPress,
+  onRemove,
+}: {
+  account: Account;
+  isActive: boolean;
+  onPress: () => void;
+  onRemove: () => void;
+}) {
+  const color = account.team.couleur_primaire ?? Colors.primary;
+  const initial = account.user.prenom?.[0] ?? account.user.nom?.[0] ?? '?';
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.accountCard,
+        isActive && { borderColor: color, borderWidth: 2 },
+        pressed && styles.rowPressed,
+      ]}
+    >
+      <View style={[styles.accountAvatar, { backgroundColor: color }]}>
+        <Text style={styles.accountAvatarText}>{initial.toUpperCase()}</Text>
+      </View>
+      <View style={styles.accountInfo}>
+        <Text style={styles.accountTeam} numberOfLines={1}>{account.team.nom}</Text>
+        <Text style={styles.accountUser} numberOfLines={1}>
+          {account.user.prenom ? `${account.user.prenom} ${account.user.nom}` : account.user.nom}
+        </Text>
+      </View>
+      <View style={styles.accountRight}>
+        {isActive && <Ionicons name="checkmark-circle" size={20} color={color} />}
+        {!isActive && (
+          <Pressable onPress={onRemove} hitSlop={8}>
+            <Ionicons name="close-circle-outline" size={20} color={Colors.textDisabled} />
+          </Pressable>
+        )}
+      </View>
+    </Pressable>
+  );
+}
+
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function SettingsScreen() {
   const db = useSQLiteContext();
-  const { user, team, signOut } = useAuth();
+  const router = useRouter();
+  const { user, team, accounts, activeIdx, signOut, switchAccount, removeAccount } = useAuth();
   const { isSyncing, lastSyncAt, sync, bumpSyncVersion } = useSync();
   const [showApiKey, setShowApiKey] = useState(false);
   const [isSyncingManual, setIsSyncingManual] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [showAddAccount, setShowAddAccount] = useState(false);
 
   const apiKey = Storage.getItemSync('api_key') ?? '—';
   const maskedKey = apiKey !== '—' ? apiKey.slice(0, 3) + '•'.repeat(apiKey.length - 3) : '—';
@@ -88,10 +138,22 @@ export default function SettingsScreen() {
   const handleSignOut = () => {
     Alert.alert(
       'Se déconnecter',
-      'Vous serez redirigé vers l\'écran de connexion. Les données locales seront conservées.',
+      'Tous vos comptes seront déconnectés. Les données locales seront conservées.',
       [
         { text: 'Annuler', style: 'cancel' },
         { text: 'Se déconnecter', style: 'destructive', onPress: signOut },
+      ],
+    );
+  };
+
+  const handleRemoveAccount = (idx: number) => {
+    const acc = accounts[idx];
+    Alert.alert(
+      'Supprimer ce compte',
+      `Retirer "${acc.team.nom}" de la liste ?`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Supprimer', style: 'destructive', onPress: () => removeAccount(idx) },
       ],
     );
   };
@@ -108,26 +170,26 @@ export default function SettingsScreen() {
           onPress: async () => {
             setIsResetting(true);
             try {
-              // Supprimer toutes les tables dans l'ordre des dépendances
               await db.execAsync(`
                 DROP TABLE IF EXISTS reactions;
                 DROP TABLE IF EXISTS commentaires;
+                DROP TABLE IF EXISTS liaisons;
                 DROP TABLE IF EXISTS notes;
                 DROP TABLE IF EXISTS taches;
                 DROP TABLE IF EXISTS projets;
                 DROP TABLE IF EXISTS users;
                 DROP TABLE IF EXISTS teams;
+                DROP TABLE IF EXISTS notifications;
                 PRAGMA user_version = 0;
               `);
-              // Recréer le schéma vide
               await migrateDbIfNeeded(db);
-              // Vider le kv-store
               Storage.removeItemSync('api_key');
               Storage.removeItemSync('team_id');
               Storage.removeItemSync('user');
               Storage.removeItemSync('team');
+              Storage.removeItemSync('accounts');
+              Storage.removeItemSync('active_idx');
               Storage.removeItemSync('last_sync');
-              // Déconnecter (vide l'état React → navigation vers login)
               await signOut();
             } catch (e) {
               console.error('[Reset DB]', e);
@@ -153,7 +215,6 @@ export default function SettingsScreen() {
           <View style={styles.avatar}>
             <Text style={styles.avatarInitial}>
               {user?.prenom?.[0] ?? user?.nom?.[0] ?? '?'}
-              
             </Text>
           </View>
           <View>
@@ -161,9 +222,47 @@ export default function SettingsScreen() {
               {user?.prenom ? `${user.prenom} ${user.nom}` : user?.nom ?? '—'}
             </Text>
             {user?.email ? <Text style={styles.identityEmail}>{user.email}</Text> : null}
-            
           </View>
         </View>
+
+        {/* ── Mes groupes ── */}
+        {accounts.length > 0 && (
+          <>
+            <SectionHeader title="Mes groupes" />
+            <View style={[styles.section, { padding: 8, gap: 6 }]}>
+              {accounts.map((acc, idx) => (
+                <AccountCard
+                  key={`${acc.team_id}-${acc.user.id}`}
+                  account={acc}
+                  isActive={idx === activeIdx}
+                  onPress={() => idx !== activeIdx && switchAccount(idx)}
+                  onRemove={() => handleRemoveAccount(idx)}
+                />
+              ))}
+              <Pressable
+                onPress={() => setShowAddAccount(true)}
+                style={({ pressed }) => [styles.addAccountBtn, pressed && styles.rowPressed]}
+              >
+                <Ionicons name="add-circle-outline" size={18} color={Colors.primary} />
+                <Text style={styles.addAccountLabel}>Ajouter un groupe</Text>
+              </Pressable>
+            </View>
+          </>
+        )}
+
+        {/* ── Admin : gestion membres ── */}
+        {user?.is_admin && (
+          <>
+            <SectionHeader title="Administration" />
+            <View style={styles.section}>
+              <SettingRow
+                icon="people-outline"
+                label="Gérer les membres"
+                onPress={() => router.push('/(app)/members')}
+              />
+            </View>
+          </>
+        )}
 
         {/* Compte */}
         <SectionHeader title="Compte" />
@@ -218,35 +317,6 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {/* Test notifications */}
-        {/* <SectionHeader title="Tests" />
-        <View style={styles.section}>
-          <SettingRow
-            icon="notifications-outline"
-            label="Tester les notifications"
-            onPress={async () => {
-              try {
-                await createNotification(db, {
-                  ref_id: `test_${Date.now()}`,
-                  type: 'assignment',
-                  titre: 'Test notification',
-                  corps: 'Ceci est une notification de test. La carte s\'affiche correctement !',
-                  entity_type: undefined,
-                  entity_id: undefined,
-                });
-                bumpSyncVersion();
-                await sendLocalNotification(
-                  'Test notification',
-                  'Ceci est une notification de test !',
-                );
-              } catch {
-                Alert.alert('Erreur', 'Impossible d\'envoyer la notification. Vérifiez les permissions.');
-              }
-            }}
-          />
-        </View> */}
-
-
         {/* Déconnexion */}
         <SectionHeader title="" />
         <View style={styles.section}>
@@ -257,7 +327,6 @@ export default function SettingsScreen() {
             danger
           />
         </View>
-
 
         {/* Données locales */}
         <SectionHeader title="Données" />
@@ -276,11 +345,17 @@ export default function SettingsScreen() {
         </View>
 
         <Text style={styles.madeby}>
-          Made by Alexis Katel & Calyte Espoir
+          Made by Alexis Katel &amp; Calyte Espoir
         </Text>
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* Modal ajouter un groupe */}
+      <AddAccountModal
+        visible={showAddAccount}
+        onClose={() => setShowAddAccount(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -290,20 +365,12 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
 
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: Colors.primary,
-    letterSpacing: -0.5,
-  },
-
-  madeby:  {
+  madeby: {
     flex: 1,
-    textAlign: "center",
+    textAlign: 'center',
     paddingTop: 30,
     fontSize: 10,
-    color: "gray"
-    
+    color: 'gray',
   },
 
   // Identity card
@@ -374,4 +441,42 @@ const styles = StyleSheet.create({
   rowContent: { flex: 1 },
   rowLabel: { fontSize: 14, fontWeight: '500', color: Colors.textPrimary },
   rowValue: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
+
+  // Account cards
+  accountCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.background,
+  },
+  accountAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountAvatarText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  accountInfo: { flex: 1 },
+  accountTeam: { fontSize: 14, fontWeight: '600', color: Colors.textPrimary },
+  accountUser: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
+  accountRight: { alignItems: 'center', justifyContent: 'center' },
+
+  // Add account button
+  addAccountBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+  },
+  addAccountLabel: { fontSize: 14, color: Colors.primary, fontWeight: '500' },
 });

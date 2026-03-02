@@ -10,6 +10,7 @@ import {
   Modal,
   TextInput,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -27,6 +28,16 @@ import { AppHeader } from '@/src/components/shared/AppHeader';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
 import type { Projet } from '@/src/db/projets';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface MemberItem {
+  id: number;       // local ID
+  server_id: number | null;
+  nom: string;
+  prenom: string | null;
+  statut: number;
+}
 
 // ─── Color palette ────────────────────────────────────────────────────────────
 
@@ -46,14 +57,18 @@ const PALETTE = [
 
 function ProjetRow({
   projet,
+  isAdmin,
   onPress,
   onEdit,
   onDelete,
+  onMembreAccess,
 }: {
   projet: Projet;
+  isAdmin: boolean;
   onPress: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onMembreAccess: () => void;
 }) {
   return (
     <Pressable onPress={onPress} style={styles.projetRow}>
@@ -71,6 +86,11 @@ function ProjetRow({
           </Text>
           <Ionicons name="document-text-outline" size={11} color={projet.couleur} />
         </View>
+        {isAdmin && (
+          <Pressable onPress={onMembreAccess} style={styles.rowAction}>
+            <Ionicons name="people-outline" size={16} color={Colors.textSecondary} />
+          </Pressable>
+        )}
         <Pressable onPress={onEdit} style={styles.rowAction}>
           <Ionicons name="pencil-outline" size={16} color={Colors.textSecondary} />
         </Pressable>
@@ -197,11 +217,18 @@ export default function ProjetsScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
   const { sync } = useSync();
-  const { team } = useAuth();
+  const { team, user } = useAuth();
   const { projets, isLoading, refresh, add } = useProjets();
   const [refreshing, setRefreshing] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [editProjet, setEditProjet] = useState<Projet | null>(null);
+
+  // Membre access modal
+  const [showMembreAccessModal, setShowMembreAccessModal] = useState(false);
+  const [membreAccessTarget, setMembreAccessTarget] = useState<Projet | null>(null);
+  const [allMembers, setAllMembers] = useState<MemberItem[]>([]);
+  const [projetUserIds, setProjetUserIds] = useState<Set<number>>(new Set());
+  const [membreAccessLoading, setMembreAccessLoading] = useState(false);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -226,6 +253,59 @@ export default function ProjetsScreen() {
     }
     await refresh();
   }, [editProjet, db, refresh, team]);
+
+  const openMembreAccessModal = useCallback(async (projet: Projet) => {
+    setMembreAccessTarget(projet);
+    setShowMembreAccessModal(true);
+    setMembreAccessLoading(true);
+    try {
+      if (!team) return;
+      const localTeam = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM teams WHERE server_id = ?', team.id,
+      );
+      if (!localTeam) return;
+
+      const members = await db.getAllAsync<MemberItem>(
+        'SELECT id, server_id, nom, prenom, statut FROM users WHERE team_id = ? ORDER BY prenom, nom',
+        localTeam.id,
+      );
+      setAllMembers(members.filter((m) => m.statut));
+
+      const pairs = await db.getAllAsync<{ user_id: number }>(
+        'SELECT user_id FROM projet_membres WHERE projet_id = ?', projet.id,
+      );
+      setProjetUserIds(new Set(pairs.map((p) => p.user_id)));
+    } finally {
+      setMembreAccessLoading(false);
+    }
+  }, [db, team]);
+
+  function toggleProjetUser(userLocalId: number) {
+    setProjetUserIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userLocalId)) next.delete(userLocalId);
+      else next.add(userLocalId);
+      return next;
+    });
+  }
+
+  const handleSaveMembreAccess = useCallback(async () => {
+    if (!membreAccessTarget?.server_id) return;
+    setMembreAccessLoading(true);
+    try {
+      const serverUserIds: number[] = [];
+      for (const localId of projetUserIds) {
+        const m = allMembers.find((mb) => mb.id === localId);
+        if (m?.server_id) serverUserIds.push(m.server_id);
+      }
+      await api.put(`/projets/${membreAccessTarget.server_id}/membres`, { user_ids: serverUserIds });
+      setShowMembreAccessModal(false);
+    } catch (e: any) {
+      Alert.alert('Erreur', e.message ?? 'Impossible de sauvegarder les accès.');
+    } finally {
+      setMembreAccessLoading(false);
+    }
+  }, [membreAccessTarget, projetUserIds, allMembers]);
 
   const handleDelete = useCallback((projet: Projet) => {
     Alert.alert(
@@ -276,9 +356,11 @@ export default function ProjetsScreen() {
             <Animated.View entering={FadeInDown.delay(index * 40).springify()}>
               <ProjetRow
                 projet={item}
+                isAdmin={!!user?.is_admin}
                 onPress={() => router.push({ pathname: '/(app)', params: { projetId: item.id } })}
                 onEdit={() => setEditProjet(item)}
                 onDelete={() => handleDelete(item)}
+                onMembreAccess={() => openMembreAccessModal(item)}
               />
             </Animated.View>
           )}
@@ -304,6 +386,82 @@ export default function ProjetsScreen() {
           ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         />
       )}
+
+      {/* Membre access modal */}
+      <Modal visible={showMembreAccessModal} animationType="slide" presentationStyle="pageSheet"
+        onRequestClose={() => setShowMembreAccessModal(false)}>
+        <View style={styles.membreModalHeader}>
+          <Text style={styles.membreModalTitle}>
+            Membres — {membreAccessTarget?.titre}
+          </Text>
+          <Pressable onPress={() => setShowMembreAccessModal(false)} hitSlop={12}>
+            <Ionicons name="close" size={22} color={Colors.textPrimary} />
+          </Pressable>
+        </View>
+
+        {membreAccessLoading && !allMembers.length ? (
+          <ActivityIndicator style={{ marginTop: 40 }} color={Colors.primary} />
+        ) : (
+          <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}>
+            {/* Tout cocher / Tout décocher */}
+            <Pressable
+              onPress={() => {
+                const allSelected = allMembers.every((m) => projetUserIds.has(m.id));
+                if (allSelected) {
+                  setProjetUserIds(new Set());
+                } else {
+                  setProjetUserIds(new Set(allMembers.map((m) => m.id)));
+                }
+              }}
+              style={[styles.membreAccessRow, { borderBottomWidth: 1, borderBottomColor: Colors.border, marginBottom: 4 }]}
+            >
+              <View style={styles.membreAccessCheck}>
+                {allMembers.length > 0 && allMembers.every((m) => projetUserIds.has(m.id))
+                  ? <Ionicons name="checkbox" size={22} color={Colors.primary} />
+                  : <Ionicons name="square-outline" size={22} color={Colors.textDisabled} />
+                }
+              </View>
+              <Text style={[styles.membreAccessLabel, { fontWeight: '700', color: Colors.textSecondary }]}>
+                {allMembers.every((m) => projetUserIds.has(m.id)) ? 'Tout décocher' : 'Tout cocher'}
+              </Text>
+            </Pressable>
+
+            {allMembers.map((m) => {
+              const checked = projetUserIds.has(m.id);
+              const name = m.prenom ? `${m.prenom} ${m.nom}` : m.nom;
+              return (
+                <Pressable key={m.id} onPress={() => toggleProjetUser(m.id)} style={styles.membreAccessRow}>
+                  <View style={styles.membreAccessAvatar}>
+                    <Text style={styles.membreAccessAvatarText}>
+                      {(m.prenom?.[0] ?? m.nom[0]).toUpperCase()}
+                    </Text>
+                  </View>
+                  <Text style={styles.membreAccessLabel} numberOfLines={1}>{name}</Text>
+                  <View style={styles.membreAccessCheck}>
+                    {checked
+                      ? <Ionicons name="checkbox" size={22} color={Colors.primary} />
+                      : <Ionicons name="square-outline" size={22} color={Colors.textDisabled} />
+                    }
+                  </View>
+                </Pressable>
+              );
+            })}
+
+            <View style={{ marginTop: 20 }}>
+              <Pressable
+                onPress={handleSaveMembreAccess}
+                disabled={membreAccessLoading}
+                style={[styles.membreAccessSaveBtn, membreAccessLoading && { opacity: 0.5 }]}
+              >
+                {membreAccessLoading
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={styles.membreAccessSaveBtnText}>Sauvegarder</Text>
+                }
+              </Pressable>
+            </View>
+          </ScrollView>
+        )}
+      </Modal>
 
       {/* Create modal */}
       <ProjetFormModal
@@ -482,4 +640,28 @@ const styles = StyleSheet.create({
   },
   saveBtnDisabled: { opacity: 0.4 },
   saveBtnText: { fontSize: 15, fontWeight: '600', color: '#fff' },
+
+  // Membre access modal
+  membreModalHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingVertical: 16,
+    borderBottomWidth: 1, borderBottomColor: Colors.borderLight,
+  },
+  membreModalTitle: { fontSize: 17, fontWeight: '700', color: Colors.textPrimary, flex: 1, marginRight: 8 },
+  membreAccessRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12,
+  },
+  membreAccessAvatar: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
+  },
+  membreAccessAvatarText: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  membreAccessLabel: { flex: 1, fontSize: 15, color: Colors.textPrimary },
+  membreAccessCheck: { width: 24, alignItems: 'center' },
+  membreAccessSaveBtn: {
+    height: 46, borderRadius: Layout.buttonRadius,
+    backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  membreAccessSaveBtnText: { fontSize: 15, fontWeight: '600', color: '#fff' },
 });

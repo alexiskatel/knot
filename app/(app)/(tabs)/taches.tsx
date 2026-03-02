@@ -31,8 +31,7 @@ import { useProjets } from '@/src/hooks/useProjets';
 import { AppHeader } from '@/src/components/shared/AppHeader';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
-import type { Tache } from '@/src/db/taches';
-import { PRIORITES, softDeleteTache, type Priorite } from '@/src/db/taches';
+import { PRIORITES, softDeleteTache, type Tache, type Priorite } from '@/src/db/taches';
 import { api } from '@/src/api/client';
 import type { Projet } from '@/src/db/projets';
 
@@ -296,8 +295,9 @@ export default function TachesScreen() {
   const [showPrioritePicker, setShowPrioritePicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   // Toujours charger toutes les taches — le filtrage projet se fait côté client
-  const { taches: allTaches, isLoading, refresh } = useTaches();
+  const { taches: allTachesRaw, isLoading, refresh } = useTaches();
   const [refreshing, setRefreshing] = useState(false);
+  const [accessibleProjetIds, setAccessibleProjetIds] = useState<Set<number> | null>(null);
 
   // Multi-select
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -312,13 +312,30 @@ export default function TachesScreen() {
       );
       if (!localTeam) return;
       const rows = await db.getAllAsync<Membre>(
-        'SELECT id, nom, prenom FROM users WHERE team_id = ? ORDER BY prenom, nom',
+        'SELECT id, nom, prenom FROM users WHERE team_id = ? AND statut = 1 ORDER BY prenom, nom',
         localTeam.id,
       );
       setMembres(rows);
     }
     loadMembres();
   }, [db, team]);
+
+  // Chargement des projets accessibles (droits d'accès)
+  useEffect(() => {
+    async function loadAccessibleProjets() {
+      if (!user) return;
+      if (user.is_admin) { setAccessibleProjetIds(null); return; }
+      const localUser = await db.getFirstAsync<{ id: number }>(
+        'SELECT id FROM users WHERE server_id = ?', user.id,
+      );
+      if (!localUser) { setAccessibleProjetIds(new Set()); return; }
+      const rows = await db.getAllAsync<{ projet_id: number }>(
+        'SELECT projet_id FROM projet_membres WHERE user_id = ?', localUser.id,
+      );
+      setAccessibleProjetIds(new Set(rows.map((r) => r.projet_id)));
+    }
+    loadAccessibleProjets();
+  }, [db, user]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -328,6 +345,11 @@ export default function TachesScreen() {
   }, [sync, refresh]);
 
   const now = Date.now();
+
+  // Filtrage par projets accessibles (null = admin, voit tout)
+  const allTaches = accessibleProjetIds !== null
+    ? allTachesRaw.filter((t) => accessibleProjetIds.has(t.projet_id))
+    : allTachesRaw;
 
   // Taches filtrées par membre uniquement → base pour les counts des cartes projet
   const membreFiltered = selectedMembreId !== null

@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import { useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -18,42 +19,69 @@ import Animated, {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { TeamInfo } from '@/src/api/auth';
-import { validateApiKey, validateTeamCode } from '@/src/api/auth';
+import { bootstrapTeam, validateApiKey, validateTeamCode } from '@/src/api/auth';
 import { Button } from '@/src/components/shared/Button';
 import { Input } from '@/src/components/shared/Input';
 import { Colors } from '@/src/constants/colors';
 import { Layout } from '@/src/constants/layout';
 import { useAuth } from '@/src/contexts/AuthContext';
 
-type Step = 'team' | 'key';
+// Login steps: team code → api key
+// Create steps: group name → code → admin info → result
+type Step = 'team' | 'key' | 'create-nom' | 'create-code' | 'create-admin' | 'create-result';
+
+interface CreateResult {
+  teamId: number;
+  teamNom: string;
+  codeUnique: string;
+  couleur: string;
+  userId: number;
+  userNom: string;
+  userPrenom: string;
+  userEmail: string;
+  apiKey: string;
+}
 
 export default function AuthScreen() {
   const { signIn } = useAuth();
 
-  const isDev = Constants.expoConfig?.extra?.dev ?? __DEV__;
-
   const [step, setStep] = useState<Step>('team');
+
+  // Login state
   const [teamCode, setTeamCode] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [teamInfo, setTeamInfo] = useState<TeamInfo | null>(null);
+
+  // Create group state
+  const [createNom, setCreateNom] = useState('');
+  const [createCode, setCreateCode] = useState('');
+  const [adminNom, setAdminNom] = useState('');
+  const [adminPrenom, setAdminPrenom] = useState('');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [createResult, setCreateResult] = useState<CreateResult | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // ── Step 1: validate team code ──────────────────────────────────────────
+  const totalSteps = step.startsWith('create') ? 4 : 2;
+  const currentStepNum =
+    step === 'team' ? 1 :
+    step === 'key' ? 2 :
+    step === 'create-nom' ? 1 :
+    step === 'create-code' ? 2 :
+    step === 'create-admin' ? 3 :
+    4;
+
+  // ── Login flow ─────────────────────────────────────────────────────────────
+
   async function handleValidateCode() {
     const code = teamCode.trim().toUpperCase();
-    if (!code) {
-      setError('Veuillez saisir votre code team.');
-      return;
-    }
+    if (!code) { setError('Veuillez saisir votre code team.'); return; }
     setError('');
     setLoading(true);
     try {
       const team = await validateTeamCode(code);
-      if (!team) {
-        setError('Réponse invalide du serveur.');
-        return;
-      }
+      if (!team) { setError('Réponse invalide du serveur.'); return; }
       setTeamInfo(team);
       setStep('key');
     } catch (e: any) {
@@ -63,7 +91,6 @@ export default function AuthScreen() {
     }
   }
 
-  // ── Step 2: validate API key ─────────────────────────────────────────────
   async function handleValidateKey() {
     const key = apiKey.trim();
     if (!key || !teamInfo) return;
@@ -71,22 +98,12 @@ export default function AuthScreen() {
     setLoading(true);
     try {
       const { user, team } = await validateApiKey(key, teamInfo.id);
-      await signIn(key, user, team);
+      await signIn(key, { ...user, is_admin: user.is_admin ?? false }, team);
     } catch (e: any) {
-      console.log(e);
-      
       setError(e.message ?? 'Clé invalide. Vérifiez et réessayez.');
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleDemoAccess() {
-    await signIn('demo-key-000', {
-      id: 1, nom: 'Demo', prenom: 'User', email: 'demo@knot.app',
-    }, {
-      id: 1, nom: 'Team Démo', couleur_primaire: '#2F3C73',
-    });
   }
 
   function handleBackToTeam() {
@@ -95,6 +112,95 @@ export default function AuthScreen() {
     setTeamInfo(null);
     setError('');
   }
+
+  // ── Create group flow ──────────────────────────────────────────────────────
+
+  function handleStartCreate() {
+    setCreateNom('');
+    setCreateCode('');
+    setAdminNom('');
+    setAdminPrenom('');
+    setAdminEmail('');
+    setCreateResult(null);
+    setError('');
+    setStep('create-nom');
+  }
+
+  function handleCreateNomNext() {
+    if (!createNom.trim()) { setError('Veuillez saisir le nom du groupe.'); return; }
+    setError('');
+    // Auto-suggest code from name
+    const base = createNom.trim().replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 5);
+    const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+    if (!createCode) setCreateCode(`${base}-${suffix}`);
+    setStep('create-code');
+  }
+
+  function handleCreateCodeNext() {
+    const code = createCode.trim().toUpperCase();
+    if (!code || code.length < 3) { setError('Le code doit contenir au moins 3 caractères.'); return; }
+    setCreateCode(code);
+    setError('');
+    setStep('create-admin');
+  }
+
+  async function handleCreateSubmit() {
+    if (!adminNom.trim()) { setError('Veuillez saisir votre nom.'); return; }
+    if (!adminPrenom.trim()) { setError('Veuillez saisir votre prénom.'); return; }
+    if (!adminEmail.trim()) { setError('Veuillez saisir votre email.'); return; }
+    setError('');
+    setLoading(true);
+    try {
+      const result = await bootstrapTeam({
+        nom: createNom.trim(),
+        code_unique: createCode.trim().toUpperCase(),
+        admin_nom: adminNom.trim(),
+        admin_prenom: adminPrenom.trim(),
+        admin_email: adminEmail.trim(),
+      });
+      setCreateResult({
+        teamId: result.team.id,
+        teamNom: result.team.nom,
+        codeUnique: result.team.code_unique,
+        couleur: result.team.couleur_primaire,
+        userId: result.user.id,
+        userNom: result.user.nom,
+        userPrenom: result.user.prenom ?? '',
+        userEmail: result.user.email ?? '',
+        apiKey: result.api_key,
+      });
+      setStep('create-result');
+    } catch (e: any) {
+      setError(e.message ?? 'Erreur lors de la création. Vérifiez le code (déjà pris ?).');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreateAccess() {
+    if (!createResult) return;
+    setLoading(true);
+    try {
+      await signIn(createResult.apiKey, {
+        id: createResult.userId,
+        nom: createResult.userNom,
+        prenom: createResult.userPrenom,
+        email: createResult.userEmail,
+        is_admin: true,
+      }, {
+        id: createResult.teamId,
+        nom: createResult.teamNom,
+        couleur_primaire: createResult.couleur,
+      });
+    } catch (e: any) {
+      Alert.alert('Erreur', 'Impossible d\'accéder à l\'espace. ' + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── Step indicator ─────────────────────────────────────────────────────────
+  const isCreate = step.startsWith('create');
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -120,6 +226,7 @@ export default function AuthScreen() {
           {/* Card */}
           <Animated.View entering={FadeInUp.delay(200).springify()} style={styles.card}>
 
+            {/* ── Step: team code ── */}
             {step === 'team' && (
               <View key="step-team">
                 <Text style={styles.stepTitle}>Rejoindre votre team.</Text>
@@ -149,18 +256,22 @@ export default function AuthScreen() {
                   disabled={teamCode.trim().length < 3}
                   style={styles.btn}
                 />
+
+                <Pressable onPress={handleStartCreate} style={styles.createLink}>
+                  <Ionicons name="add-circle-outline" size={16} color={Colors.primary} />
+                  <Text style={styles.createLinkText}>Créer un nouveau groupe</Text>
+                </Pressable>
               </View>
             )}
 
+            {/* ── Step: api key ── */}
             {step === 'key' && teamInfo && (
               <View key="step-key">
-                {/* Back button */}
                 <Pressable onPress={handleBackToTeam} style={styles.backBtn}>
                   <Ionicons name="arrow-back" size={18} color={Colors.textSecondary} />
                   <Text style={styles.backLabel}>Changer de team</Text>
                 </Pressable>
 
-                {/* Team badge */}
                 <View style={[styles.teamBadge, { borderColor: teamInfo.couleur_primaire }]}>
                   <View style={[styles.teamDot, { backgroundColor: teamInfo.couleur_primaire }]} />
                   <Text style={styles.teamName}>{teamInfo.nom}</Text>
@@ -196,25 +307,190 @@ export default function AuthScreen() {
                 />
               </View>
             )}
-          </Animated.View>
 
-          {/* Dev bypass */}
-          {/* {isDev && (
-            <Animated.View entering={FadeIn.delay(500)} style={styles.devArea}>
-              <Pressable onPress={handleDemoAccess} style={styles.devBtn}>
-                <Text style={styles.devLabel}>⚡ Accès démo (dev)</Text>
-              </Pressable>
-            </Animated.View>
-          )} */}
+            {/* ── Step: create — nom du groupe ── */}
+            {step === 'create-nom' && (
+              <View key="step-create-nom">
+                <Pressable onPress={() => setStep('team')} style={styles.backBtn}>
+                  <Ionicons name="arrow-back" size={18} color={Colors.textSecondary} />
+                  <Text style={styles.backLabel}>Retour</Text>
+                </Pressable>
+
+                <Text style={styles.stepTitle}>Nouveau groupe</Text>
+                <Text style={styles.stepSubtitle}>Quel est le nom de votre espace de travail ?</Text>
+
+                <View style={styles.fieldGroup}>
+                  <Input
+                    label="Nom du groupe"
+                    value={createNom}
+                    onChangeText={(t) => { setCreateNom(t); setError(''); }}
+                    placeholder="ex: Mon Équipe"
+                    autoFocus
+                    returnKeyType="next"
+                    onSubmitEditing={handleCreateNomNext}
+                    error={error}
+                  />
+                </View>
+
+                <Button
+                  label="Suivant"
+                  onPress={handleCreateNomNext}
+                  disabled={createNom.trim().length < 2}
+                  style={styles.btn}
+                />
+              </View>
+            )}
+
+            {/* ── Step: create — code unique ── */}
+            {step === 'create-code' && (
+              <View key="step-create-code">
+                <Pressable onPress={() => setStep('create-nom')} style={styles.backBtn}>
+                  <Ionicons name="arrow-back" size={18} color={Colors.textSecondary} />
+                  <Text style={styles.backLabel}>Retour</Text>
+                </Pressable>
+
+                <Text style={styles.stepTitle}>Code du groupe</Text>
+                <Text style={styles.stepSubtitle}>
+                  Ce code sera utilisé pour rejoindre votre espace. Il doit être unique.
+                </Text>
+
+                <View style={styles.fieldGroup}>
+                  <Input
+                    label="Code unique"
+                    value={createCode}
+                    onChangeText={(t) => { setCreateCode(t.toUpperCase()); setError(''); }}
+                    placeholder="ex: TEAM-AB12"
+                    autoCapitalize="characters"
+                    maxLength={20}
+                    autoFocus
+                    returnKeyType="next"
+                    onSubmitEditing={handleCreateCodeNext}
+                    error={error}
+                  />
+                </View>
+
+                <Button
+                  label="Suivant"
+                  onPress={handleCreateCodeNext}
+                  disabled={createCode.trim().length < 3}
+                  style={styles.btn}
+                />
+              </View>
+            )}
+
+            {/* ── Step: create — admin info ── */}
+            {step === 'create-admin' && (
+              <View key="step-create-admin">
+                <Pressable onPress={() => setStep('create-code')} style={styles.backBtn}>
+                  <Ionicons name="arrow-back" size={18} color={Colors.textSecondary} />
+                  <Text style={styles.backLabel}>Retour</Text>
+                </Pressable>
+
+                <Text style={styles.stepTitle}>Votre profil admin</Text>
+                <Text style={styles.stepSubtitle}>
+                  Renseignez vos informations — vous serez administrateur du groupe.
+                </Text>
+
+                <View style={styles.fieldGroup}>
+                  <Input
+                    label="Nom"
+                    value={adminNom}
+                    onChangeText={(t) => { setAdminNom(t); setError(''); }}
+                    placeholder="Votre nom"
+                    autoFocus
+                    returnKeyType="next"
+                  />
+                  <View style={{ height: 12 }} />
+                  <Input
+                    label="Prénom"
+                    value={adminPrenom}
+                    onChangeText={(t) => { setAdminPrenom(t); setError(''); }}
+                    placeholder="Votre prénom"
+                    returnKeyType="next"
+                  />
+                  <View style={{ height: 12 }} />
+                  <Input
+                    label="Email"
+                    value={adminEmail}
+                    onChangeText={(t) => { setAdminEmail(t); setError(''); }}
+                    placeholder="votre@email.com"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    returnKeyType="done"
+                    onSubmitEditing={handleCreateSubmit}
+                    error={error}
+                  />
+                </View>
+
+                <Button
+                  label="Créer le groupe"
+                  onPress={handleCreateSubmit}
+                  loading={loading}
+                  disabled={!adminNom.trim() || !adminPrenom.trim() || !adminEmail.trim()}
+                  style={styles.btn}
+                />
+              </View>
+            )}
+
+            {/* ── Step: create — result ── */}
+            {step === 'create-result' && createResult && (
+              <View key="step-create-result">
+                <View style={styles.successIcon}>
+                  <Ionicons name="checkmark-circle" size={40} color={Colors.success} />
+                </View>
+
+                <Text style={styles.stepTitle}>Groupe créé !</Text>
+                <Text style={styles.stepSubtitle}>
+                  Partagez ces informations aux membres pour qu'ils puissent rejoindre votre espace.
+                </Text>
+
+                {/* Code */}
+                <View style={styles.resultBox}>
+                  <Text style={styles.resultLabel}>Code du groupe</Text>
+                  <Pressable
+                    style={styles.resultRow}
+                    onPress={() => Share.share({ message: createResult.codeUnique })}
+                  >
+                    <Text style={styles.resultValue}>{createResult.codeUnique}</Text>
+                    <Ionicons name="copy-outline" size={16} color={Colors.textSecondary} />
+                  </Pressable>
+                </View>
+
+                {/* API Key */}
+                <View style={styles.resultBox}>
+                  <Text style={styles.resultLabel}>Votre clé API (admin)</Text>
+                  <Pressable
+                    style={styles.resultRow}
+                    onPress={() => Share.share({ message: createResult.apiKey })}
+                  >
+                    <Text style={[styles.resultValue, styles.resultKey]}>{createResult.apiKey}</Text>
+                    <Ionicons name="copy-outline" size={16} color={Colors.textSecondary} />
+                  </Pressable>
+                  <Text style={styles.resultHint}>Conservez cette clé précieusement.</Text>
+                </View>
+
+                <Button
+                  label="Accéder à mon espace"
+                  onPress={handleCreateAccess}
+                  loading={loading}
+                  style={styles.btn}
+                />
+              </View>
+            )}
+          </Animated.View>
 
           {/* Step indicator */}
           <Animated.View entering={FadeIn.delay(400)} style={styles.stepIndicator}>
-            <View style={[styles.stepDot, step === 'team' && styles.stepDotActive]} />
-            <View style={[styles.stepDot, step === 'key' && styles.stepDotActive]} />
+            {Array.from({ length: totalSteps }).map((_, i) => (
+              <View
+                key={i}
+                style={[styles.stepDot, i === currentStepNum - 1 && styles.stepDotActive]}
+              />
+            ))}
           </Animated.View>
 
           <Text style={styles.madeby}>
-            Made by Alexis Katel & Calyte Espoir
+            Made by Alexis Katel &amp; Calyte Espoir
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -223,18 +499,16 @@ export default function AuthScreen() {
 }
 
 const styles = StyleSheet.create({
-  
   safe: {
     flex: 1,
     backgroundColor: Colors.background,
   },
-   madeby:  {
+  madeby: {
     flex: 1,
-    textAlign: "center",
+    textAlign: 'center',
     paddingTop: 30,
     fontSize: 10,
-    color: "gray"
-    
+    color: 'gray',
   },
   kav: {
     flex: 1,
@@ -351,22 +625,62 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
   },
 
-  // Dev
-  devArea: {
+  // Create group link
+  createLink: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 24,
-  },
-  devBtn: {
-    paddingHorizontal: 16,
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 20,
     paddingVertical: 8,
-    borderRadius: 8,
+  },
+  createLinkText: {
+    fontSize: 14,
+    color: Colors.primary,
+    fontWeight: '500',
+  },
+
+  // Success icon
+  successIcon: {
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+
+  // Result boxes
+  resultBox: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderStyle: 'dashed',
   },
-  devLabel: {
-    fontSize: 13,
+  resultLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  resultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  resultValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    letterSpacing: 1,
+  },
+  resultKey: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  resultHint: {
+    fontSize: 11,
     color: Colors.textDisabled,
+    marginTop: 4,
   },
 
   // Step indicator

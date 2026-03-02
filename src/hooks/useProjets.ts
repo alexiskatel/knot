@@ -6,13 +6,13 @@ import { useSync } from '@/src/contexts/SyncContext';
 
 export function useProjets() {
   const db = useSQLiteContext();
-  const { team } = useAuth();
+  const { team, user } = useAuth();
   const { syncVersion } = useSync();
   const [projets, setProjets] = useState<Projet[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const load = useCallback(async () => {
-    if (!team) return;
+    if (!team || !user) return;
     const localTeam = await db.getFirstAsync<{ id: number }>(
       'SELECT id FROM teams WHERE server_id = ?',
       team.id,
@@ -22,13 +22,25 @@ export function useProjets() {
     setIsLoading(true);
     try {
       const rows = await getAllProjets(db, localTeam.id);
-      console.log(localTeam.id);
-      
-      setProjets(rows);
+
+      if (user.is_admin) {
+        setProjets(rows);
+      } else {
+        // Filtrer par projet_membres (droits d'accès)
+        const localUser = await db.getFirstAsync<{ id: number }>(
+          'SELECT id FROM users WHERE server_id = ?', user.id,
+        );
+        if (!localUser) { setProjets([]); return; }
+        const accessible = await db.getAllAsync<{ projet_id: number }>(
+          'SELECT projet_id FROM projet_membres WHERE user_id = ?', localUser.id,
+        );
+        const ids = new Set(accessible.map((r) => r.projet_id));
+        setProjets(rows.filter((p) => ids.has(p.id)));
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [db, team]);
+  }, [db, team, user]);
 
   useEffect(() => { load(); }, [load, syncVersion]);
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useFocusEffect } from 'expo-router';
 import {
   View,
@@ -110,9 +110,20 @@ export default function CorbeilleScreen() {
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [projets, setProjets] = useState<ActiveProjet[]>([]);
 
+  // Guard against stale responses when team changes mid-request
+  const loadIdRef = useRef(0);
+
   // Dropdowns
   const [showProjetPicker, setShowProjetPicker] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // Reset filters when the active team changes
+  useEffect(() => {
+    setItems([]);
+    setSelectedProjetId(null);
+    setSearch('');
+    setError(null);
+  }, [team?.id]);
 
   // Load active projets for filter
   useEffect(() => {
@@ -123,10 +134,11 @@ export default function CorbeilleScreen() {
         : [];
       setProjets(list.map((p: any) => ({ id: p.id, titre: p.titre, couleur: p.couleur ?? Colors.primary })));
     }).catch(() => {});
-  }, [team]);
+  }, [team?.id]);
 
   const load = useCallback(async (refreshing = false) => {
     if (!team) return;
+    const myLoadId = ++loadIdRef.current;
     if (refreshing) setIsRefreshing(true);
     else setIsLoading(true);
     setError(null);
@@ -139,20 +151,24 @@ export default function CorbeilleScreen() {
       if (to) params.set('deleted_to', to);
 
       const res = await api.get<any>(`/admin/trash?${params.toString()}`);
+      if (myLoadId !== loadIdRef.current) return; // réponse périmée, groupe changé
       const list: TrashedItem[] = Array.isArray(res?.list) ? res.list
         : Array.isArray(res?.list?.list) ? res.list.list
         : Array.isArray(res?.list?.data) ? res.list.data
         : [];
       setItems(list);
     } catch (e: any) {
+      if (myLoadId !== loadIdRef.current) return;
       const msg = e?.response?.status === 403
         ? 'Accès refusé — votre compte n\'a pas les droits admin.'
         : 'Impossible de charger la corbeille. Vérifiez la connexion.';
       setError(msg);
       console.warn('[Corbeille] Chargement échoué:', e);
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (myLoadId === loadIdRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, [team, activeTab, search, selectedProjetId, dateFilter]);
 
